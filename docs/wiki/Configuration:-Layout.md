@@ -251,12 +251,12 @@ layout {
 
 ### `focus-ring` and `border`
 
-Focus ring and border are drawn around windows and indicate the active window.
+Main ring and border are drawn around windows and indicate the active window.
 They are very similar and have the same options.
 
 The difference is that the focus ring is drawn only around the active window, whereas borders are drawn around all windows and affect their sizes (windows shrink to make space for the borders).
 
-| Focus Ring                | Border                |
+| Main Ring                | Border                |
 | ------------------------- | --------------------- |
 | ![Screenshot showing a focused image in the center row using focus ring](./img/focus-ring.png) | ![Screenshot showing a focused image in the center row using border, while top and bottom windows have the inactive color](./img/border.png) |
 
@@ -270,7 +270,7 @@ The difference is that the focus ring is drawn only around the active window, wh
 >
 > Alternatively, you can override this behavior with the [`draw-border-with-background` window rule](./Configuration:-Window-Rules.md#draw-border-with-background).
 
-Focus ring and border have the following options.
+Main ring and border have the following options.
 
 ```kdl
 layout {

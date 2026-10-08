@@ -644,6 +644,9 @@ impl<W: LayoutElement> Workspace<W> {
         anim: Option<niri_config::Animation>,
     ) {
         self.enter_output_for_window(tile.window());
+        // Conscia owns normal windows and transient dialogs alike. Floating is
+        // retained as a niri transport facility, not selected by its old heuristics.
+        let is_floating = false;
         tile.restore_to_floating = is_floating;
 
         match target {
@@ -678,7 +681,7 @@ impl<W: LayoutElement> Workspace<W> {
                 }
             }
             WorkspaceAddWindowTarget::NextTo(next_to) => {
-                let activate = activate.map_smart(|| self.active_window().unwrap().id() == next_to);
+                let activate = activate.map_smart(|| self.active_window().is_some_and(|w| w.id() == next_to));
 
                 let floating_has_window = self.floating.has_window(next_to);
 
@@ -1923,38 +1926,11 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn dnd_scroll_gesture_begin(&mut self) {
-        self.scrolling.dnd_scroll_gesture_begin();
+        // Screen-edge drag scrolling is removed.
     }
 
-    pub fn dnd_scroll_gesture_scroll(&mut self, pos: Point<f64, Logical>, speed: f64) -> bool {
-        let config = &self.options.gestures.dnd_edge_view_scroll;
-        let trigger_width = config.trigger_width;
-
-        // This working area intentionally does not include extra struts from Options.
-        let x = pos.x - self.working_area.loc.x;
-        let width = self.working_area.size.w;
-
-        let x = x.clamp(0., width);
-        let trigger_width = trigger_width.clamp(0., width / 2.);
-
-        let delta = if x < trigger_width {
-            -(trigger_width - x)
-        } else if width - x < trigger_width {
-            trigger_width - (width - x)
-        } else {
-            0.
-        };
-
-        let delta = if trigger_width < 0.01 {
-            // Sanity check for trigger-width 0 or small window sizes.
-            0.
-        } else {
-            // Normalize to [0, 1].
-            delta / trigger_width
-        };
-        let delta = delta * speed;
-
-        self.scrolling.dnd_scroll_gesture_scroll(delta)
+    pub fn dnd_scroll_gesture_scroll(&mut self, _pos: Point<f64, Logical>, _speed: f64) -> bool {
+        false
     }
 
     pub fn dnd_scroll_gesture_end(&mut self) {
@@ -2119,4 +2095,37 @@ fn compute_workspace_shadow_config(
     config.offset.y.0 *= norm;
 
     config
+}
+
+// Main/Reel input entry points. Layer-shell and lock-screen arbitration stays in niri.
+impl<W: LayoutElement> Workspace<W> {
+    pub fn conscia_reel_at(&self, pos: Point<f64, Logical>) -> bool {
+        self.scrolling.conscia_reel_at(pos)
+    }
+
+    pub fn conscia_click(&mut self, pos: Point<f64, Logical>, add: bool) -> bool {
+        let handled = self.scrolling.conscia_click(pos, add);
+        if handled { self.floating_is_active = FloatingActive::No; }
+        handled
+    }
+
+    pub fn conscia_scroll(&mut self, delta: f64, slots: bool) {
+        self.scrolling.conscia_scroll(delta, slots);
+    }
+
+    pub fn conscia_resize_start(&mut self, pos: Point<f64, Logical>) -> bool {
+        self.scrolling.conscia_resize_start(pos)
+    }
+
+    pub fn conscia_resize_motion(&mut self, pos: Point<f64, Logical>) -> bool {
+        self.scrolling.conscia_resize_motion(pos)
+    }
+
+    pub fn conscia_resize_end(&mut self) -> bool {
+        self.scrolling.conscia_resize_end()
+    }
+
+    pub fn conscia_minimize(&mut self, window: &W::Id) -> bool {
+        self.scrolling.conscia_minimize(window)
+    }
 }

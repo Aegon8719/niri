@@ -819,14 +819,8 @@ impl<W: LayoutElement> Layout<W> {
 
                     let source = &mut monitors[source_idx];
 
-                    // If we stopped a workspace switch, then we might need to clean up workspaces.
-                    // Also if empty_workspace_above_first is set and there are only 2 workspaces
-                    // left, both will be empty and one of them needs to be removed.
-                    // clean_up_workspaces takes care of this.
-                    if stopped_ws_switch
-                        || (source.options.layout.empty_workspace_above_first
-                            && source.workspaces.len() == 2)
-                    {
+                    // Reclaim extra empty workspaces and restore the minimum after migration.
+                    if stopped_ws_switch || source.workspaces.len() < 2 {
                         source.clean_up_workspaces();
                     }
                 }
@@ -982,6 +976,12 @@ impl<W: LayoutElement> Layout<W> {
     ) -> Option<&Output> {
         let scrolling_height = height.map(SizeChange::from);
         let id = window.id().clone();
+        // New applications take focus by default, including when the previous
+        // focus window is expanded. Explicit background-window rules still win.
+        let activate = match activate {
+            ActivateWindow::Smart => ActivateWindow::Yes,
+            other => other,
+        };
 
         match &mut self.monitor_set {
             MonitorSet::Normal {
@@ -1195,33 +1195,13 @@ impl<W: LayoutElement> Layout<W> {
         match &mut self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
-                    for (idx, ws) in mon.workspaces.iter_mut().enumerate() {
+                    for ws in &mut mon.workspaces {
                         if ws.has_window(window) {
                             let removed = ws.remove_tile(window, transaction);
 
-                            // Clean up empty workspaces that are not active and not last.
-                            if !ws.has_windows_or_name()
-                                && idx != mon.active_workspace_idx
-                                && idx != mon.workspaces.len() - 1
-                                && mon.workspace_switch.is_none()
-                            {
-                                mon.workspaces.remove(idx);
-
-                                if idx < mon.active_workspace_idx {
-                                    mon.active_workspace_idx -= 1;
-                                }
-                            }
-
-                            // Special case handling when empty_workspace_above_first is set and all
-                            // workspaces are empty.
-                            if mon.options.layout.empty_workspace_above_first
-                                && mon.workspaces.len() == 2
-                                && mon.workspace_switch.is_none()
-                            {
-                                assert!(!mon.workspaces[0].has_windows_or_name());
-                                assert!(!mon.workspaces[1].has_windows_or_name());
-                                mon.workspaces.remove(1);
-                                mon.active_workspace_idx = 0;
+                            // Use the same minimum and empty-workspace policy as switching.
+                            if mon.workspace_switch.is_none() {
+                                mon.clean_up_workspaces();
                             }
                             return Some(removed);
                         }
@@ -2620,114 +2600,9 @@ impl<W: LayoutElement> Layout<W> {
     pub fn advance_animations(&mut self) {
         let _span = tracy_client::span!("Layout::advance_animations");
 
-        let mut dnd_scroll = None;
-        let mut is_dnd = false;
-        if let Some(dnd) = &self.dnd {
-            dnd_scroll = Some((dnd.output.clone(), dnd.pointer_pos_within_output, true));
-            is_dnd = true;
-        }
-
+        // Dragging never scrolls an edge or activates a hovered workspace/window.
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             move_.tile.advance_animations();
-
-            if dnd_scroll.is_none() {
-                dnd_scroll = Some((
-                    move_.output.clone(),
-                    move_.pointer_pos_within_output,
-                    !move_.is_floating,
-                ));
-            }
-        }
-
-        let is_overview_open = self.overview_open;
-
-        // Scroll the view if needed.
-        if let Some((output, pos_within_output, is_scrolling)) = dnd_scroll {
-            if let Some(mon) = self.monitor_for_output_mut(&output) {
-                let mut scrolled = false;
-
-                let zoom = mon.overview_zoom();
-                scrolled |= mon.dnd_scroll_gesture_scroll(pos_within_output, 1. / zoom);
-
-                if is_scrolling {
-                    if let Some((ws, geo)) = mon.workspace_under(pos_within_output) {
-                        let idx = mon.idx_of_ws(ws.id()).unwrap();
-                        let ws = &mut mon.workspaces[idx];
-                        // As far as the DnD scroll gesture is concerned, the workspace spans across
-                        // the whole monitor horizontally.
-                        let ws_pos = Point::from((0., geo.loc.y));
-                        scrolled |=
-                            ws.dnd_scroll_gesture_scroll(pos_within_output - ws_pos, 1. / zoom);
-                    }
-                }
-
-                if scrolled {
-                    // Don't trigger DnD hold while scrolling.
-                    if let Some(dnd) = &mut self.dnd {
-                        dnd.hold = None;
-                    }
-                } else if is_dnd {
-                    let target = mon
-                        .window_under(pos_within_output)
-                        .map(|(win, _)| DndHoldTarget::Window(win.id().clone()))
-                        .or_else(|| {
-                            mon.workspace_under_narrow(pos_within_output)
-                                .map(|ws| DndHoldTarget::Workspace(ws.id()))
-                        });
-
-                    let dnd = self.dnd.as_mut().unwrap();
-                    if let Some(target) = target {
-                        let now = self.clock.now_unadjusted();
-                        let start_time = if let Some(hold) = &mut dnd.hold {
-                            if hold.target != target {
-                                hold.start_time = now;
-                            }
-                            hold.target = target;
-                            hold.start_time
-                        } else {
-                            let hold = dnd.hold.insert(DndHold {
-                                start_time: now,
-                                target,
-                            });
-                            hold.start_time
-                        };
-
-                        // Delay copied from gnome-shell.
-                        let delay = Duration::from_millis(750);
-                        if delay <= now.saturating_sub(start_time) {
-                            let hold = dnd.hold.take().unwrap();
-
-                            // Synchronize workspace switch to overview close to get a monotonic
-                            // animation.
-                            let config = is_overview_open
-                                .then_some(self.options.animations.overview_open_close.0);
-
-                            let mon = self.monitor_for_output_mut(&output).unwrap();
-
-                            let ws_idx = match hold.target {
-                                DndHoldTarget::Window(id) => mon
-                                    .workspaces
-                                    .iter_mut()
-                                    .position(|ws| ws.activate_window(&id))
-                                    .unwrap(),
-                                DndHoldTarget::Workspace(id) => mon.idx_of_ws(id).unwrap(),
-                            };
-
-                            mon.dnd_scroll_gesture_end();
-                            mon.activate_workspace_with_anim_config(ws_idx, config);
-
-                            self.focus_output(&output);
-
-                            if is_overview_open {
-                                self.close_overview();
-                            }
-                        }
-                    } else {
-                        // No target, reset the hold timer.
-                        dnd.hold = None;
-                    }
-                }
-            }
         }
 
         if let Some(OverviewProgress::Animation(anim)) = &mut self.overview_progress {
@@ -5036,5 +4911,13 @@ fn compute_overview_zoom(options: &Options, overview_progress: Option<f64>) -> f
         (1. - p * (1. - zoom)).max(0.0001)
     } else {
         1.
+    }
+}
+
+impl<W: LayoutElement> Layout<W> {
+    pub fn conscia_minimize(&mut self, window: &W::Id) {
+        for workspace in self.workspaces_mut() {
+            if workspace.conscia_minimize(window) { break; }
+        }
     }
 }

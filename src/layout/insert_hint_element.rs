@@ -51,8 +51,19 @@ impl InsertHintElement {
         radius: CornerRadius,
         scale: f64,
     ) {
+        self.update_render_elements_with_alpha(size, view_rect, radius, scale, 1.);
+    }
+
+    pub fn update_render_elements_with_alpha(
+        &mut self,
+        size: Size<f64, Logical>,
+        view_rect: Rectangle<f64, Logical>,
+        radius: CornerRadius,
+        scale: f64,
+        alpha: f32,
+    ) {
         self.inner
-            .update_render_elements(size, true, false, false, view_rect, radius, scale, 1.);
+            .update_render_elements(size, true, false, false, view_rect, radius, scale, alpha);
     }
 
     pub fn render(

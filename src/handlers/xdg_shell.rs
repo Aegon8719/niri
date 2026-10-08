@@ -463,6 +463,15 @@ impl XdgShellHandler for State {
         });
     }
 
+    fn minimize_request(&mut self, toplevel: ToplevelSurface) {
+        let window = self.niri.layout.find_window_and_output(toplevel.wl_surface())
+            .map(|(mapped, _)| mapped.window.clone());
+        if let Some(window) = window {
+            self.niri.layout.conscia_minimize(&window);
+            self.niri.queue_redraw_all();
+        }
+    }
+
     fn maximize_request(&mut self, toplevel: ToplevelSurface) {
         if let Some((mapped, _)) = self
             .niri

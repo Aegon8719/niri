@@ -61,7 +61,7 @@ Writing out the flag enables it, and omitting it or commenting it out disables i
 For example:
 
 ```kdl
-// "Focus follows mouse" is enabled.
+// "Main follows mouse" is enabled.
 input {
     focus-follows-mouse
 
@@ -70,7 +70,7 @@ input {
 ```
 
 ```kdl
-// "Focus follows mouse" is disabled.
+// "Main follows mouse" is disabled.
 input {
     // focus-follows-mouse
 

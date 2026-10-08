@@ -25,7 +25,7 @@ const PADDING: i32 = 8;
 const FONT: &str = "sans 14px";
 const BORDER: i32 = 4;
 const LINE_INTERVAL: i32 = 2;
-const TITLE: &str = "Important Hotkeys";
+const TITLE: &str = "Main 桌面快捷键";
 
 pub struct HotkeyOverlay {
     is_open: bool,
@@ -196,6 +196,14 @@ fn format_bind(binds: &[Bind], action: &Action) -> Option<(Option<Key>, String)>
 
 fn collect_actions(config: &Config) -> Vec<&Action> {
     let binds = &config.binds.0;
+    // The curated list follows the functional order in the configuration.
+    let mut curated = Vec::new();
+    for bind in binds {
+        if matches!(bind.hotkey_overlay_title, Some(Some(_))) && !curated.contains(&&bind.action) {
+            curated.push(&bind.action);
+        }
+    }
+    if !curated.is_empty() { return curated; }
 
     // Collect actions that we want to show.
     let mut actions = vec![&Action::ShowHotkeyOverlay];
@@ -321,7 +329,7 @@ fn render(
     // target_size.h -= margin * 2;
     // anyhow::ensure!(target_size.w > 0 && target_size.h > 0);
 
-    let strings = collect_actions(config)
+    let mut strings = collect_actions(config)
         .into_iter()
         .filter_map(|action| format_bind(&config.binds.0, action))
         .map(|(key, action)| {
@@ -331,6 +339,7 @@ fn render(
             (key, action)
         })
         .collect::<Vec<_>>();
+    strings.insert(0, (" Super × 2 ".into(), "打开应用启动器".into()));
 
     let mut font = FontDescription::from_string(FONT);
     font.set_absolute_size(to_physical_precise_round(scale, font.size()));

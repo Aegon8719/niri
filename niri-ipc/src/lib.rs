@@ -192,6 +192,27 @@ pub struct PickedColor {
 #[cfg_attr(feature = "clap", command(subcommand_help_heading = "Actions"))]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
 pub enum Action {
+    /// Operate on the active Main-region Dwindle tree.
+    MainFocusLeft {},
+    /// Operate on the active Main-region Dwindle tree.
+    MainFocusRight {},
+    /// Operate on the active Main-region Dwindle tree.
+    MainFocusUp {},
+    /// Operate on the active Main-region Dwindle tree.
+    MainFocusDown {},
+    /// Operate on the active Main-region Dwindle tree.
+    MainSwapLeft {},
+    /// Operate on the active Main-region Dwindle tree.
+    MainSwapRight {},
+    /// Operate on the active Main-region Dwindle tree.
+    MainSwapUp {},
+    /// Operate on the active Main-region Dwindle tree.
+    MainSwapDown {},
+    /// Operate on the active Main-region Dwindle tree.
+    MainToggleSplit {},
+    /// Operate on the active Main-region Dwindle tree.
+    MainSwapSplit {},
+
     /// Exit niri.
     Quit {
         /// Skip the "Press Enter to confirm" prompt.

@@ -14,7 +14,7 @@ use smithay::wayland::compositor::{
     SurfaceAttributes,
 };
 use smithay::wayland::dmabuf::get_dmabuf;
-use smithay::wayland::shell::xdg::ToplevelCachedState;
+use smithay::wayland::shell::xdg::{ToplevelCachedState, XdgToplevelSurfaceData};
 use smithay::wayland::shm::{ShmHandler, ShmState};
 
 use super::xdg_shell::add_mapped_toplevel_pre_commit_hook;
@@ -79,6 +79,26 @@ impl CompositorHandler for State {
             // This is a root surface commit. It might have mapped a previously-unmapped toplevel.
             if let Entry::Occupied(entry) = self.niri.unmapped_windows.entry(surface.clone()) {
                 if is_mapped(surface) {
+                    // VMware's edge drag-and-drop helper is exposed as an xdg
+                    // toplevel by xwayland-satellite. It briefly maps when the
+                    // pointer reaches a guest edge, then unmaps on a timeout.
+                    // Treating it as an application promotes it into Main and
+                    // demotes the entire previous group until it disappears.
+                    // Keep its protocol lifecycle, but never add this helper to
+                    // the layout, focus, task list, or rendering/input scene.
+                    let is_vmware_edge_helper = with_states(surface, |states| {
+                        let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>() else {
+                            return false;
+                        };
+                        let data = data.lock().unwrap();
+                        data.app_id.as_deref() == Some("vmware-user")
+                            && data.title.as_deref() == Some("vmware-user")
+                    });
+                    if is_vmware_edge_helper {
+                        entry.get().window.on_commit();
+                        trace!("ignoring VMware edge helper toplevel");
+                        return;
+                    }
                     // The toplevel got mapped.
                     let Unmapped {
                         window,

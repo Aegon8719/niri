@@ -471,6 +471,14 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     pub fn update_render_elements(&mut self, is_active: bool, view_rect: Rectangle<f64, Logical>) {
+        self.update_decorated_render_elements(is_active, view_rect, 1.);
+    }
+
+    pub(super) fn update_decorated_render_elements(&mut self, is_active: bool,
+        view_rect: Rectangle<f64, Logical>, visual_scale: f64) {
+        let radius_scale = (1. / visual_scale.max(0.001)) as f32;
+        self.rounded_corner_damage.set_corner_radius(
+            self.window.geometry_corner_radius().scaled_by(radius_scale));
         let rules = self.window.rules();
         let animated_tile_size = self.animated_tile_size();
         let expanded_progress = self.expanded_progress();
@@ -502,6 +510,7 @@ impl<W: LayoutElement> Tile<W> {
         let radius = self
             .window
             .geometry_corner_radius()
+            .scaled_by(radius_scale)
             .expanded_by(border_width as f32)
             .scaled_by(1. - expanded_progress as f32);
         self.border.update_render_elements(
@@ -523,6 +532,7 @@ impl<W: LayoutElement> Tile<W> {
         } else {
             self.window
                 .geometry_corner_radius()
+                .scaled_by(radius_scale)
                 .scaled_by(1. - expanded_progress as f32)
         };
         self.shadow.update_render_elements(
@@ -1061,19 +1071,35 @@ impl<W: LayoutElement> Tile<W> {
 
     fn render_inner<R: NiriRenderer>(
         &self,
+        ctx: RenderCtx<R>,
+        location: Point<f64, Logical>,
+        xray_pos: XrayPos,
+        focus_ring: bool,
+        push: &mut dyn FnMut(TileRenderElement<R>),
+    ) {
+        self.render_decorated(ctx, location, xray_pos, focus_ring, 1., true, 1., push);
+    }
+
+    /// Main/Reel uses its own scene animation but retains native decorations.
+    pub(super) fn render_decorated<R: NiriRenderer>(
+        &self,
         mut ctx: RenderCtx<R>,
         location: Point<f64, Logical>,
         mut xray_pos: XrayPos,
         focus_ring: bool,
+        opacity: f32,
+        popups: bool,
+        visual_scale: f64,
         push: &mut dyn FnMut(TileRenderElement<R>),
     ) {
         let _span = tracy_client::span!("Tile::render_inner");
+        let radius_scale = (1. / visual_scale.max(0.001)) as f32;
 
         let scale = Scale::from(self.scale);
         let fullscreen_progress = self.fullscreen_progress();
         let expanded_progress = self.expanded_progress();
 
-        let win_alpha = if self.window.is_ignoring_opacity_window_rule() {
+        let win_alpha = opacity * if self.window.is_ignoring_opacity_window_rule() {
             1.
         } else {
             let alpha = self.window.rules().opacity.unwrap_or(1.).clamp(0., 1.);
@@ -1110,17 +1136,18 @@ impl<W: LayoutElement> Tile<W> {
         let radius = self
             .window
             .geometry_corner_radius()
+            .scaled_by(radius_scale)
             .scaled_by(1. - expanded_progress as f32);
 
         // Popups go on top, whether it's resize or not.
-        self.window.render_popups(
+        if popups { self.window.render_popups(
             ctx.r(),
             window_render_loc,
             scale,
             win_alpha,
             xray_pos,
             &mut |elem| push(elem.into()),
-        );
+        ); }
 
         // If we're resizing, try to render a shader, or a fallback.
         let mut pushed_resize = false;
@@ -1286,6 +1313,7 @@ impl<W: LayoutElement> Tile<W> {
                 let radius = self
                     .window
                     .geometry_corner_radius()
+                    .scaled_by(radius_scale)
                     .expanded_by(border_width as f32)
                     .scaled_by(1. - expanded_progress as f32);
 

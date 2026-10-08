@@ -47,7 +47,7 @@ fn unfocus_preserves_current_size() {
 
     let _ = f.client(id).window(&surface).recent_configures();
 
-    // Focus a different output which should drop the Activated state.
+    // Main a different output which should drop the Activated state.
     f.niri_focus_output(2);
 
     f.double_roundtrip(id);
@@ -65,7 +65,7 @@ fn unfocus_preserves_current_size() {
     window.ack_last_and_commit();
     f.roundtrip(id);
 
-    // Focus the first output which should add back the Activated state.
+    // Main the first output which should add back the Activated state.
     f.niri_focus_output(1);
 
     f.double_roundtrip(id);
@@ -97,7 +97,7 @@ fn resize_to_different_size() {
         @"size: 500 × 100, bounds: 1920 × 1080, states: [Activated]"
     );
 
-    // Focus a different output which should drop the Activated state.
+    // Main a different output which should drop the Activated state.
     f.niri_focus_output(2);
     f.double_roundtrip(id);
     // This should request the new size since the window hasn't committed yet.
@@ -370,7 +370,7 @@ fn moving_across_workspaces_doesnt_cancel_resize() {
     window.ack_last_and_commit();
     f.roundtrip(id);
 
-    // Focus, adding Activated, and move to workspace down, causing removing and adding to a
+    // Main, adding Activated, and move to workspace down, causing removing and adding to a
     // floating layout.
     f.niri_focus_output(1);
     f.niri().layout.move_to_workspace_down(true);

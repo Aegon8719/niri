@@ -343,6 +343,7 @@ pub struct Niri {
     pub seat: Seat<State>,
     /// Scancodes of the keys to suppress.
     pub suppressed_keys: HashSet<Keycode>,
+    pub super_tap: crate::input::super_tap::SuperTap,
     /// Button codes of the mouse buttons to suppress.
     pub suppressed_buttons: HashSet<u32>,
     pub bind_cooldown_timers: HashMap<Key, RegistrationToken>,
@@ -771,7 +772,7 @@ impl State {
         state.load_xkb_file();
         // Initialize some IPC server state.
         state.ipc_keyboard_layouts_changed();
-        // Focus the default monitor if set by the user.
+        // Main the default monitor if set by the user.
         state.focus_default_monitor();
 
         Ok(state)
@@ -1085,7 +1086,7 @@ impl State {
         self.move_cursor_to_output(&target);
     }
 
-    /// Focus a specific window, taking care of a potential active output change and cursor
+    /// Main a specific window, taking care of a potential active output change and cursor
     /// warp.
     pub fn focus_window(&mut self, window: &Window) {
         let active_output = self.niri.layout.active_output().cloned();
@@ -2703,6 +2704,7 @@ impl Niri {
             popups: PopupManager::default(),
             popup_grab: None,
             suppressed_keys: HashSet::new(),
+            super_tap: Default::default(),
             suppressed_buttons: HashSet::new(),
             bind_cooldown_timers: HashMap::new(),
             bind_repeat_timer: Option::default(),
@@ -3215,46 +3217,8 @@ impl Niri {
         Some((output, pos_within_output))
     }
 
-    fn is_inside_hot_corner(&self, output: &Output, pos: Point<f64, Logical>) -> bool {
-        let config = self.config.borrow();
-        let hot_corners = output
-            .user_data()
-            .get::<OutputName>()
-            .and_then(|name| config.outputs.find(name))
-            .and_then(|c| c.hot_corners)
-            .unwrap_or(config.gestures.hot_corners);
-
-        if hot_corners.off {
-            return false;
-        }
-
-        // Use size from the ceiled output geometry, since that's what we currently use for pointer
-        // motion clamping.
-        let geom = self.global_space.output_geometry(output).unwrap();
-        let size = geom.size.to_f64();
-
-        let contains = move |corner: Point<f64, Logical>| {
-            Rectangle::new(corner, Size::new(1., 1.)).contains(pos)
-        };
-
-        if hot_corners.top_right && contains(Point::new(size.w - 1., 0.)) {
-            return true;
-        }
-        if hot_corners.bottom_left && contains(Point::new(0., size.h - 1.)) {
-            return true;
-        }
-        if hot_corners.bottom_right && contains(Point::new(size.w - 1., size.h - 1.)) {
-            return true;
-        }
-
-        // If the user didn't explicitly set any corners, we default to top-left.
-        if (hot_corners.top_left
-            || !(hot_corners.top_right || hot_corners.bottom_right || hot_corners.bottom_left))
-            && contains(Point::new(0., 0.))
-        {
-            return true;
-        }
-
+    fn is_inside_hot_corner(&self, _output: &Output, _pos: Point<f64, Logical>) -> bool {
+        // Main/Reel has no screen-edge or hot-corner actions.
         false
     }
 
@@ -3481,6 +3445,13 @@ impl Niri {
         }
 
         if self.screenshot_ui.is_open() || self.window_mru_ui.is_open() {
+            return rv;
+        }
+
+        // Main docking owns pointer motion, including outside the work area.
+        // Mod+drag does not install a Smithay grab, so suppress shell surfaces
+        // and hot corners here as well as for client titlebar grabs.
+        if self.layout.workspaces().any(|(_, _, ws)| ws.scrolling().conscia_drag_active()) {
             return rv;
         }
 
@@ -4132,6 +4103,13 @@ impl Niri {
     }
 
     pub fn refresh_layout(&mut self) {
+        // A tiling drag belongs to the focused workspace, never to a lock
+        // screen, launcher, overview, or other surface taking keyboard focus.
+        if !matches!(&self.keyboard_focus, KeyboardFocus::Layout { .. }) {
+            for ws in self.layout.workspaces_mut() {
+                ws.scrolling_mut().conscia_drag_end(true);
+            }
+        }
         let layout_is_active = match &self.keyboard_focus {
             KeyboardFocus::Layout { .. } => true,
             KeyboardFocus::LayerShell { .. } => false,
@@ -6787,63 +6765,8 @@ impl Niri {
         }
     }
 
-    pub fn handle_focus_follows_mouse(&mut self, new_focus: &PointContents) {
-        let Some(ffm) = self.config.borrow().input.focus_follows_mouse else {
-            return;
-        };
-
-        let pointer = &self.seat.get_pointer().unwrap();
-        if pointer.is_grabbed() {
-            return;
-        }
-
-        if self.window_mru_ui.is_open() {
-            return;
-        }
-
-        // Recompute the current pointer focus because we don't update it during animations.
-        let current_focus = self.contents_under(pointer.current_location());
-
-        if let Some(output) = &new_focus.output {
-            if current_focus.output.as_ref() != Some(output) {
-                self.layout.focus_output(output);
-            }
-        }
-
-        if let Some(window) = &new_focus.window {
-            if !self.layout.is_overview_open() && current_focus.window.as_ref() != Some(window) {
-                let (window, hit) = window;
-
-                // Don't trigger focus-follows-mouse over the tab indicator.
-                if matches!(
-                    hit,
-                    HitType::Activate {
-                        is_tab_indicator: true
-                    }
-                ) {
-                    return;
-                }
-
-                if !self.layout.should_trigger_focus_follows_mouse_on(window) {
-                    return;
-                }
-
-                if let Some(threshold) = ffm.max_scroll_amount {
-                    if self.layout.scroll_amount_to_activate(window) > threshold.0 {
-                        return;
-                    }
-                }
-
-                self.layout.activate_window_without_raising(window);
-                self.layer_shell_on_demand_focus = None;
-            }
-        }
-
-        if let Some(layer) = &new_focus.layer {
-            if current_focus.layer.as_ref() != Some(layer) {
-                self.layer_shell_on_demand_focus = Some(layer.clone());
-            }
-        }
+    pub fn handle_focus_follows_mouse(&mut self, _new_focus: &PointContents) {
+        // Main changes only through explicit activation, never pointer hover.
     }
 
     pub fn do_screen_transition(&mut self, renderer: &mut GlesRenderer, delay_ms: Option<u16>) {

@@ -42,7 +42,7 @@ pub struct FloatingSpace<W: LayoutElement> {
 
     /// Id of the active window.
     ///
-    /// The active window is not necessarily the topmost window. Focus-follows-mouse should
+    /// The active window is not necessarily the topmost window. Main-follows-mouse should
     /// activate a window, but not bring it to the top, because that's very annoying.
     ///
     /// This is always set to `Some()` when `tiles` isn't empty.

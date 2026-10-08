@@ -230,14 +230,14 @@ output "HDMI-A-1" {
 
 <sup>Since: 25.05</sup>
 
-Focus this output by default when niri starts.
+Main this output by default when niri starts.
 
 If multiple outputs with `focus-at-startup` are connected, they are prioritized in the order that they appear in the config.
 
 When none of the connected outputs are explicitly `focus-at-startup`, niri will focus the first one sorted by name (same output sorting as used elsewhere in niri).
 
 ```kdl
-// Focus HDMI-A-1 by default.
+// Main HDMI-A-1 by default.
 output "HDMI-A-1" {
     focus-at-startup
 }

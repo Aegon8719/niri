@@ -9,7 +9,7 @@ They can be enabled in the `background-effect {}` section of [window](./Configur
 ![Screenshot with blur](./img/blur.png)
 
 The window needs to be semitransparent for you to see the background effect (otherwise it's fully covered by the opaque window).
-Focus ring and border can also cover the background effect, see [this FAQ entry](./FAQ.md#why-are-transparent-windows-tinted-why-is-the-borderfocus-ring-showing-up-through-semitransparent-windows) for how to change this.
+Main ring and border can also cover the background effect, see [this FAQ entry](./FAQ.md#why-are-transparent-windows-tinted-why-is-the-borderfocus-ring-showing-up-through-semitransparent-windows) for how to change this.
 
 ### Blur
 

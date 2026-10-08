@@ -327,6 +327,9 @@ impl<W: LayoutElement> Monitor<W> {
 
         let ws = Workspace::new(output.clone(), clock.clone(), options.clone());
         workspaces.push(ws);
+        if workspaces.len() < 2 {
+            workspaces.push(Workspace::new(output.clone(), clock.clone(), options.clone()));
+        }
 
         Self {
             output_name: output.name(),
@@ -656,6 +659,10 @@ impl<W: LayoutElement> Monitor<W> {
             0
         };
         for idx in (range_start..self.workspaces.len() - 1).rev() {
+            // Keep two workspaces available even when every application is closed.
+            if self.workspaces.len() <= 2 {
+                break;
+            }
             if self.active_workspace_idx == idx {
                 continue;
             }
@@ -668,13 +675,9 @@ impl<W: LayoutElement> Monitor<W> {
             }
         }
 
-        // Special case handling when empty_workspace_above_first is set and all workspaces
-        // are empty.
-        if self.options.layout.empty_workspace_above_first && self.workspaces.len() == 2 {
-            assert!(!self.workspaces[0].has_windows_or_name());
-            assert!(!self.workspaces[1].has_windows_or_name());
-            self.workspaces.remove(1);
-            self.active_workspace_idx = 0;
+        // Removing or moving a workspace to another output may leave only one.
+        while self.workspaces.len() < 2 {
+            self.add_workspace_bottom();
         }
     }
 
@@ -1193,8 +1196,13 @@ impl<W: LayoutElement> Monitor<W> {
             && self.workspaces.len() > 1
         {
             if options.layout.empty_workspace_above_first {
-                self.add_workspace_top();
-            } else if self.workspace_switch.is_none() && self.active_workspace_idx != 0 {
+                if self.workspaces[0].has_windows_or_name() {
+                    self.add_workspace_top();
+                }
+            } else if self.workspace_switch.is_none()
+                && self.active_workspace_idx != 0
+                && self.workspaces.len() > 2
+            {
                 self.workspaces.remove(0);
                 self.active_workspace_idx = self.active_workspace_idx.saturating_sub(1);
             }
@@ -1862,35 +1870,7 @@ impl<W: LayoutElement> Monitor<W> {
     }
 
     pub fn dnd_scroll_gesture_begin(&mut self) {
-        if let Some(WorkspaceSwitch::Gesture(WorkspaceSwitchGesture {
-            dnd_last_event_time: Some(_),
-            ..
-        })) = &self.workspace_switch
-        {
-            // Already active.
-            return;
-        }
-
-        if !self.overview_open {
-            // This gesture is only for the overview.
-            return;
-        }
-
-        let center_idx = self.active_workspace_idx;
-        let current_idx = self.workspace_render_idx();
-
-        let gesture = WorkspaceSwitchGesture {
-            center_idx,
-            start_idx: current_idx,
-            current_idx,
-            animation: None,
-            tracker: SwipeTracker::new(),
-            is_touchpad: false,
-            is_clamped: false,
-            dnd_last_event_time: Some(self.clock.now_unadjusted()),
-            dnd_nonzero_start_time: None,
-        };
-        self.workspace_switch = Some(WorkspaceSwitch::Gesture(gesture));
+        // Screen-edge drag scrolling is removed.
     }
 
     pub fn workspace_switch_gesture_update(
@@ -1945,89 +1925,8 @@ impl<W: LayoutElement> Monitor<W> {
         Some(true)
     }
 
-    pub fn dnd_scroll_gesture_scroll(&mut self, pos: Point<f64, Logical>, speed: f64) -> bool {
-        let zoom = self.overview_zoom();
-
-        let Some(WorkspaceSwitch::Gesture(gesture)) = &mut self.workspace_switch else {
-            return false;
-        };
-
-        let Some(last_time) = gesture.dnd_last_event_time else {
-            // Not a DnD scroll.
-            return false;
-        };
-
-        let config = &self.options.gestures.dnd_edge_workspace_switch;
-        let trigger_height = config.trigger_height;
-
-        // Restrict the scrolling horizontally to the strip of workspaces to avoid unwanted trigger
-        // after using the hot corner or during horizontal scroll.
-        let width = self.view_size.w * zoom;
-        let x = pos.x - (self.view_size.w - width) / 2.;
-
-        // Consider the working area so layer-shell docks and such don't prevent scrolling.
-        let y = pos.y - self.working_area.loc.y;
-        let height = self.working_area.size.h;
-
-        let y = y.clamp(0., height);
-        let trigger_height = trigger_height.clamp(0., height / 2.);
-
-        let delta = if x < 0. || width <= x {
-            // Outside the bounds horizontally.
-            0.
-        } else if y < trigger_height {
-            -(trigger_height - y)
-        } else if height - y < trigger_height {
-            trigger_height - (height - y)
-        } else {
-            0.
-        };
-
-        let delta = if trigger_height < 0.01 {
-            // Sanity check for trigger-height 0 or small window sizes.
-            0.
-        } else {
-            // Normalize to [0, 1].
-            delta / trigger_height
-        };
-        let delta = delta * speed;
-
-        let now = self.clock.now_unadjusted();
-        gesture.dnd_last_event_time = Some(now);
-
-        if delta == 0. {
-            // We're outside the scrolling zone.
-            gesture.dnd_nonzero_start_time = None;
-            return false;
-        }
-
-        let nonzero_start = *gesture.dnd_nonzero_start_time.get_or_insert(now);
-
-        // Delay starting the gesture a bit to avoid unwanted movement when dragging across
-        // monitors.
-        let delay = Duration::from_millis(u64::from(config.delay_ms));
-        if now.saturating_sub(nonzero_start) < delay {
-            return true;
-        }
-
-        let time_delta = now.saturating_sub(last_time).as_secs_f64();
-
-        let delta = delta * time_delta * config.max_speed;
-
-        gesture.tracker.push(delta, now);
-
-        let total_height = WORKSPACE_DND_EDGE_SCROLL_MOVEMENT;
-        let pos = gesture.tracker.pos() / total_height;
-        let unclamped = gesture.start_idx + pos;
-
-        let (min, max) = gesture.min_max(self.workspaces.len());
-        let clamped = unclamped.clamp(min, max);
-
-        // Make sure that DnD scrolling too much outside the min/max does not "build up".
-        gesture.start_idx += clamped - unclamped;
-        gesture.current_idx = clamped;
-
-        true
+    pub fn dnd_scroll_gesture_scroll(&mut self, _pos: Point<f64, Logical>, _speed: f64) -> bool {
+        false
     }
 
     pub fn workspace_switch_gesture_end(&mut self, is_touchpad: Option<bool>) -> bool {
@@ -2127,8 +2026,8 @@ impl<W: LayoutElement> Monitor<W> {
         assert_eq!(&*self.options, &options);
 
         assert!(
-            !self.workspaces.is_empty(),
-            "monitor must have at least one workspace"
+            self.workspaces.len() >= 2,
+            "monitor must have at least two workspaces"
         );
         assert!(self.active_workspace_idx < self.workspaces.len());
 
@@ -2162,16 +2061,8 @@ impl<W: LayoutElement> Monitor<W> {
             )
         }
 
-        if self.options.layout.empty_workspace_above_first {
-            assert!(
-                self.workspaces.len() != 2,
-                "if empty_workspace_above_first is set there must be just 1 or 3+ workspaces"
-            )
-        }
-
-        // If there's no workspace switch in progress, there can't be any non-last non-active
-        // empty workspaces. If empty_workspace_above_first is set then the first workspace
-        // will be empty too.
+        // Outside transitions, extra empty workspaces are removed, except for the
+        // two-workspace minimum and the optional empty workspace above the first.
         let pre_skip = if self.options.layout.empty_workspace_above_first {
             1
         } else {
@@ -2187,7 +2078,7 @@ impl<W: LayoutElement> Monitor<W> {
                 // skip last
                 .skip(1)
             {
-                if idx != self.active_workspace_idx {
+                if idx != self.active_workspace_idx && self.workspaces.len() > 2 {
                     assert!(
                         ws.has_windows_or_name(),
                         "non-active workspace can't be empty and unnamed except the last one"

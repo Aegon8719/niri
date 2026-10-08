@@ -3,6 +3,8 @@ use std::collections::hash_map::Entry;
 use std::collections::HashSet;
 use std::time::Duration;
 
+pub mod super_tap;
+
 use calloop::timer::{TimeoutAction, Timer};
 use input::event::gesture::GestureEventCoordinates as _;
 use niri_config::{
@@ -57,6 +59,7 @@ use crate::utils::{center, get_monotonic_time, CastSessionId, ResizeEdge};
 
 pub mod backend_ext;
 pub mod click_grab;
+mod conscia;
 pub mod move_grab;
 pub mod pick_color_grab;
 pub mod pick_window_grab;
@@ -475,6 +478,20 @@ impl State {
                 let modified = keysym.modified_sym();
                 let raw = keysym.raw_latin_sym_or_raw_current_sym();
                 let modifiers = modifiers_from_state(*mods);
+                let tap_allowed = !this.niri.is_locked() && !is_inhibiting_shortcuts
+                    && !this.niri.screenshot_ui.is_open() && !this.niri.window_mru_ui.is_open()
+                    && !this.niri.exit_confirm_dialog.is_open()
+                    && !modifiers.intersects(Modifiers::CTRL | Modifiers::ALT | Modifiers::SHIFT)
+                    && !this.niri.seat.get_pointer().unwrap().is_grabbed();
+                #[cfg(feature = "dbus")]
+                let tap_allowed = tap_allowed && block == KbMonBlock::Pass;
+                if this.niri.super_tap.key(key_code,
+                    matches!(raw, Some(Keysym::Super_L | Keysym::Super_R)), pressed,
+                    Duration::from_micros(time.micros()), tap_allowed)
+                {
+                    this.do_action(Action::Spawn(vec!["dms".into(), "ipc".into(), "call".into(),
+                        "spotlight".into(), "toggle".into()]), false);
+                }
 
                 // After updating XKB state from accessibility-grabbed keys, return right away and
                 // don't handle them.
@@ -538,6 +555,16 @@ impl State {
                 }
 
                 if pressed && raw == Some(Keysym::Escape) {
+                    if this.conscia_pointer_drag_cancel() {
+                        let pointer = this.niri.seat.get_pointer().unwrap();
+                        if pointer.with_grab(|_, grab| grab.downcast_ref::<MoveGrab>()
+                            .is_some_and(|grab| grab.is_main_tiling())).unwrap_or(false)
+                        {
+                            pointer.unset_grab(this, serial, time);
+                        }
+                        this.niri.suppressed_keys.insert(key_code);
+                        return FilterResult::Intercept(None);
+                    }
                     // Cancel certain grabs on Escape.
                     let pointer = this.niri.seat.get_pointer().unwrap();
                     if pointer
@@ -703,6 +730,28 @@ impl State {
         }
 
         match action {
+            Action::MainFocusLeft | Action::MainFocusRight | Action::MainFocusUp | Action::MainFocusDown | Action::MainSwapLeft | Action::MainSwapRight | Action::MainSwapUp | Action::MainSwapDown | Action::MainToggleSplit | Action::MainSwapSplit => {
+                if let Some(ws) = self.niri.layout.active_workspace_mut() {
+                    if !ws.floating_is_active() {
+                        match action {
+                            Action::MainFocusLeft => { ws.scrolling_mut().conscia_keyboard_direction(-1, 0, false); },
+                            Action::MainFocusRight => { ws.scrolling_mut().conscia_keyboard_direction(1, 0, false); },
+                            Action::MainFocusUp => { ws.scrolling_mut().conscia_keyboard_direction(0, -1, false); },
+                            Action::MainFocusDown => { ws.scrolling_mut().conscia_keyboard_direction(0, 1, false); },
+                            Action::MainSwapLeft => { ws.scrolling_mut().conscia_keyboard_direction(-1, 0, true); },
+                            Action::MainSwapRight => { ws.scrolling_mut().conscia_keyboard_direction(1, 0, true); },
+                            Action::MainSwapUp => { ws.scrolling_mut().conscia_keyboard_direction(0, -1, true); },
+                            Action::MainSwapDown => { ws.scrolling_mut().conscia_keyboard_direction(0, 1, true); },
+                            Action::MainToggleSplit => { ws.scrolling_mut().conscia_keyboard_split(false); },
+                            Action::MainSwapSplit => { ws.scrolling_mut().conscia_keyboard_split(true); },
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+                self.niri.layer_shell_on_demand_focus = None;
+                self.niri.queue_redraw_all();
+            }
+
             Action::Quit(skip_confirmation) => {
                 if !skip_confirmation && self.niri.exit_confirm_dialog.show() {
                     self.niri.queue_redraw_all();
@@ -2587,6 +2636,8 @@ impl State {
             }
         }
 
+        self.conscia_pointer_resize_motion(new_pos);
+
         let under = self.niri.contents_under(new_pos);
 
         // Handle confined pointer.
@@ -2722,6 +2773,8 @@ impl State {
             }
         }
 
+        self.conscia_pointer_resize_motion(pos);
+
         let under = self.niri.contents_under(pos);
 
         self.niri.handle_focus_follows_mouse(&under);
@@ -2791,17 +2844,30 @@ impl State {
         let button_code = event.button_code();
 
         let button_state = event.state();
+        self.niri.super_tap.cancel();
 
         let mod_key = self.backend.mod_key(&self.niri.config.borrow());
 
         // Ignore release events for mouse clicks that triggered a bind.
         if self.niri.suppressed_buttons.remove(&button_code) {
+            if matches!(button, Some(MouseButton::Left | MouseButton::Right)) && button_state == ButtonState::Released {
+                self.conscia_pointer_resize_end();
+                self.update_pointer_contents();
+            }
             return;
         }
 
         let mods = self.niri.seat.get_keyboard().unwrap().modifier_state();
         let modifiers = modifiers_from_state(mods);
         let mod_down = modifiers.contains(mod_key.to_modifiers());
+
+        if button_state == ButtonState::Pressed
+            && self.conscia_pointer_click(button == Some(MouseButton::Left), button == Some(MouseButton::Right))
+        {
+            self.niri.suppressed_buttons.insert(button_code);
+            self.update_pointer_contents();
+            return;
+        }
 
         if ButtonState::Pressed == button_state {
             let mut is_mru_open = false;
@@ -2927,7 +2993,7 @@ impl State {
 
                 // Check if we need to start an interactive move.
                 if button == Some(MouseButton::Left) && !pointer.is_grabbed() {
-                    if is_overview_open || mod_down {
+                    if is_overview_open {
                         let location = pointer.current_location();
 
                         if !is_overview_open {
@@ -3107,6 +3173,7 @@ impl State {
     }
 
     fn on_pointer_axis<I: InputBackend>(&mut self, event: I::PointerAxisEvent) {
+        self.niri.super_tap.cancel();
         let pointer = &self.niri.seat.get_pointer().unwrap();
 
         let source = event.source();
@@ -3123,6 +3190,11 @@ impl State {
 
         let horizontal_amount_v120 = event.amount_v120(Axis::Horizontal);
         let vertical_amount_v120 = event.amount_v120(Axis::Vertical);
+
+        let (reel_delta, reel_slots) = if let Some(v120) = vertical_amount_v120 {
+            (v120 / 120., true)
+        } else { (event.amount(Axis::Vertical).unwrap_or(0.), false) };
+        if self.conscia_pointer_scroll(reel_delta, reel_slots) { return; }
 
         let is_overview_open = self.niri.layout.is_overview_open();
 
@@ -3960,6 +4032,8 @@ impl State {
     }
 
     fn on_gesture_swipe_begin<I: InputBackend>(&mut self, event: I::GestureSwipeBeginEvent) {
+        if self.conscia_pointer_scroll(0., false) { return; }
+
         if self.niri.window_mru_ui.is_open() {
             // Don't start swipe gestures while in the MRU.
             return;
@@ -4001,6 +4075,8 @@ impl State {
     ) where
         I::Device: 'static,
     {
+        if self.conscia_pointer_scroll(-event.delta_y(), false) { return; }
+
         let mut delta_x = event.delta_x();
         let mut delta_y = event.delta_y();
 

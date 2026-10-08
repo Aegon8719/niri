@@ -85,7 +85,7 @@ pub struct ResolvedWindowRules {
     /// Extra bound on the maximum window height.
     pub max_height: Option<u16>,
 
-    /// Focus ring overrides.
+    /// Main ring overrides.
     pub focus_ring: BorderRule,
     /// Window border overrides.
     pub border: BorderRule,

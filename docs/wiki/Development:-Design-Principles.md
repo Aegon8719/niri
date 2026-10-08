@@ -111,7 +111,7 @@ We do also advertise our more unique features though like screencast block-out-f
 We default to CSD (`prefer-no-csd` is commented out).
 This gives new users easy and familiar way to move and close windows via their titlebars, especially considering that niri doesn't have serverside titlebars (so far at least).
 
-Focus rings are drawn fully behind windows by default.
+Main rings are drawn fully behind windows by default.
 While this unfortunately messes with window transparency, [which is a common source of confusion](./FAQ.md#why-are-transparent-windows-tinted-why-is-the-borderfocus-ring-showing-up-through-semitransparent-windows), defaulting to drawing focus rings only around windows would be even worse because it has holes inside clientside rounded corners.
 The ideal solution here would be to propose a Wayland protocol for windows to report their corner radius to the compositor (which would generally help for serverside decorations in different compositors).
 

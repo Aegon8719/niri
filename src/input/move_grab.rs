@@ -40,6 +40,7 @@ pub struct MoveGrab {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GestureState {
     Recognizing,
+    MainTiling,
     Move,
     ViewOffset,
 }
@@ -75,11 +76,20 @@ impl MoveGrab {
         self.gesture == GestureState::Move
     }
 
+    pub fn is_main_tiling(&self) -> bool {
+        self.gesture == GestureState::MainTiling
+    }
+
     pub fn view_offset_output(&self) -> Option<&Output> {
         (self.gesture == GestureState::ViewOffset).then_some(&self.start_output)
     }
 
     fn on_ungrab(&mut self, data: &mut State) {
+        // Releases can arrive before the frame containing the last motion.
+        // Resolve that motion before committing the displayed docking plan.
+        if matches!(self.gesture, GestureState::Recognizing | GestureState::MainTiling) {
+            self.on_frame(data);
+        }
         let layout = &mut data.niri.layout;
         match self.gesture {
             GestureState::Recognizing => {
@@ -101,6 +111,11 @@ impl MoveGrab {
                 layout.activate_window(&self.window);
             }
             GestureState::Move => layout.interactive_move_end(&self.window),
+            GestureState::MainTiling => {
+                for ws in layout.workspaces_mut() {
+                    ws.scrolling_mut().conscia_drag_end(false);
+                }
+            }
             GestureState::ViewOffset => {
                 layout.view_offset_gesture_end(Some(false));
             }
@@ -134,6 +149,20 @@ impl MoveGrab {
                 .set_cursor_image(CursorImageStatus::Named(self.move_icon));
         }
 
+        true
+    }
+
+    fn begin_main_tiling(&mut self, data: &mut State) -> bool {
+        if data.niri.layout.is_overview_open() { return false; }
+        let Some(mon) = data.niri.layout.monitor_for_output_mut(&self.start_output) else { return false; };
+        if !mon.active_workspace().scrolling_mut()
+            .conscia_drag_start_window(&self.window, self.start_pos_within_output) { return false; }
+        self.gesture = GestureState::MainTiling;
+        data.niri.focus_layer_surface_if_on_demand(None);
+        data.niri.layout.focus_output(&self.start_output);
+        if !self.start_data.is_touch() {
+            data.niri.cursor_manager.set_cursor_image(CursorImageStatus::Named(CursorIcon::Grabbing));
+        }
         true
     }
 
@@ -200,11 +229,10 @@ impl MoveGrab {
                     })
                     .unwrap_or(false);
 
-                let is_view_offset =
-                    self.enable_view_offset && !is_floating && c.x.abs() > c.y.abs();
-
-                let started = if is_view_offset {
-                    self.begin_view_offset(data)
+                // Tiled titlebar drags only use Main docking. Never fall back
+                // to native column scrolling or extracting a tiled window.
+                let started = if !is_floating {
+                    self.begin_main_tiling(data)
                 } else {
                     self.begin_move(data)
                 };
@@ -220,6 +248,15 @@ impl MoveGrab {
 
         match self.gesture {
             GestureState::Recognizing => return true,
+            GestureState::MainTiling => {
+                let Some(geo) = data.niri.global_space.output_geometry(&self.start_output) else { return false; };
+                let local = self.last_location - geo.loc.to_f64();
+                let ongoing = data.niri.layout.workspaces_mut()
+                    .find(|ws| ws.has_window(&self.window))
+                    .is_some_and(|ws| ws.scrolling_mut().conscia_drag_motion(local));
+                data.niri.queue_redraw_all();
+                return ongoing;
+            }
             GestureState::Move => {
                 let Some((output, pos_within_output)) = data.niri.output_under(self.last_location)
                 else {
@@ -260,12 +297,16 @@ impl MoveGrab {
     }
 
     fn on_toggle_floating(&mut self, data: &mut State) -> bool {
-        if self.gesture == GestureState::ViewOffset {
+        if matches!(self.gesture, GestureState::ViewOffset | GestureState::MainTiling) {
             return true;
         }
 
         // Start move if still recognizing.
         if self.gesture == GestureState::Recognizing {
+            let is_floating = data.niri.layout.workspaces().any(|(_, _, ws)| {
+                ws.windows().any(|w| w.window == self.window) && ws.is_floating(&self.window)
+            });
+            if !is_floating { return false; }
             let Some((output, pos_within_output)) = data.niri.output_under(self.last_location)
             else {
                 return false;
@@ -524,6 +565,7 @@ impl TouchGrab<State> for MoveGrab {
 
     fn cancel(&mut self, data: &mut State, handle: &mut TouchInnerHandle<'_, State>) {
         handle.cancel(data);
+        if self.is_main_tiling() { data.conscia_pointer_drag_cancel(); }
         handle.unset_grab(self, data);
     }
 

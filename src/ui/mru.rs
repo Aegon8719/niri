@@ -206,7 +206,7 @@ struct ScopePanel {
 struct Thumbnail {
     id: MappedId,
 
-    /// Focus timestamp, if any.
+    /// Main timestamp, if any.
     timestamp: Option<Duration>,
     /// Whether the window is on the current MRU workspace.
     on_current_workspace: bool,

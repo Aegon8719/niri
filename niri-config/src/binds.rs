@@ -103,6 +103,17 @@ pub struct SwitchAction {
 // Remember to add new actions to the CLI enum too.
 #[derive(knuffel::Decode, Debug, Clone, PartialEq)]
 pub enum Action {
+    MainFocusLeft,
+    MainFocusRight,
+    MainFocusUp,
+    MainFocusDown,
+    MainSwapLeft,
+    MainSwapRight,
+    MainSwapUp,
+    MainSwapDown,
+    MainToggleSplit,
+    MainSwapSplit,
+
     Quit(#[knuffel(property(name = "skip-confirmation"), default)] bool),
     #[knuffel(skip)]
     ChangeVt(i32),
@@ -402,6 +413,17 @@ pub enum Action {
 impl From<niri_ipc::Action> for Action {
     fn from(value: niri_ipc::Action) -> Self {
         match value {
+            niri_ipc::Action::MainFocusLeft {} => Self::MainFocusLeft,
+            niri_ipc::Action::MainFocusRight {} => Self::MainFocusRight,
+            niri_ipc::Action::MainFocusUp {} => Self::MainFocusUp,
+            niri_ipc::Action::MainFocusDown {} => Self::MainFocusDown,
+            niri_ipc::Action::MainSwapLeft {} => Self::MainSwapLeft,
+            niri_ipc::Action::MainSwapRight {} => Self::MainSwapRight,
+            niri_ipc::Action::MainSwapUp {} => Self::MainSwapUp,
+            niri_ipc::Action::MainSwapDown {} => Self::MainSwapDown,
+            niri_ipc::Action::MainToggleSplit {} => Self::MainToggleSplit,
+            niri_ipc::Action::MainSwapSplit {} => Self::MainSwapSplit,
+
             niri_ipc::Action::Quit { skip_confirmation } => Self::Quit(skip_confirmation),
             niri_ipc::Action::PowerOffMonitors {} => Self::PowerOffMonitors,
             niri_ipc::Action::PowerOnMonitors {} => Self::PowerOnMonitors,
