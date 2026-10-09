@@ -361,6 +361,52 @@ impl<W: LayoutElement> Workspace<W> {
         self.has_windows() || self.name.is_some()
     }
 
+    pub fn bar_gap_reference(&self) -> [i32; 4] {
+        let scale = self.scale.fractional_scale();
+        let gap = self.scrolling.conscia_edge_gap_reference();
+        let struts = self.options.layout.struts;
+        [struts.top, struts.bottom, struts.left, struts.right]
+            .map(|strut| ((gap + strut.0) * scale).round().max(0.) as i32)
+    }
+
+    pub fn visible_edge_gaps(&self) -> [i32; 4] {
+        let scale = self.scale.fractional_scale();
+        let area = self.working_area;
+        let active = self.active_window().map(|w| w.id());
+        let mut gaps = [i32::MAX; 4];
+        for (tile, layout) in self.scrolling.tiles_with_ipc_layouts() {
+            let Some((x, y)) = layout.tile_pos_in_workspace_view else { continue };
+            if tile.window().sizing_mode().is_fullscreen() { continue; }
+            let tile_size = tile.tile_size();
+            if tile_size.w <= 0. || tile_size.h <= 0. { continue; }
+            let factor = (layout.tile_size.0 / tile_size.w).min(layout.tile_size.1 / tile_size.h);
+            let size = tile_size.upscale(factor);
+            let x = x + (layout.tile_size.0 - size.w) / 2.;
+            let y = y + (layout.tile_size.1 - size.h) / 2.;
+            if x + size.w <= 0. || y + size.h <= 0.
+                || x >= self.view_size.w || y >= self.view_size.h { continue; }
+            // Tile geometry already includes the border; only the ring protrudes from it.
+            let ring = if active == Some(tile.window().id()) && !tile.focus_ring().is_off() {
+                tile.focus_ring().width() * factor
+            } else { 0. };
+            let distances = [
+                (y - ring) * scale - (area.loc.y * scale).round(),
+                ((area.loc.y + area.size.h) * scale).round() - (y + size.h + ring) * scale,
+                (x - ring) * scale - (area.loc.x * scale).round(),
+                ((area.loc.x + area.size.w) * scale).round() - (x + size.w + ring) * scale,
+            ];
+            for (gap, distance) in gaps.iter_mut().zip(distances) {
+                *gap = (*gap).min(distance.round().max(0.) as i32);
+            }
+        }
+        for (gap, fallback) in gaps.iter_mut().zip(self.bar_gap_reference()) {
+            if *gap == i32::MAX {
+                *gap = fallback;
+            }
+        }
+        gaps
+    }
+
     pub fn scale(&self) -> smithay::output::Scale {
         self.scale
     }

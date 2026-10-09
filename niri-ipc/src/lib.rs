@@ -1496,6 +1496,16 @@ pub struct Workspace {
     pub is_focused: bool,
     /// Id of the active window on this workspace, if any.
     pub active_window_id: Option<u64>,
+    /// Visible tiled-window clearances from the working area, in physical pixels.
+    /// Order: top, bottom, left, right. Borders and the active focus ring are included;
+    /// layer-shell reservations are excluded to avoid feedback when sizing panels.
+    #[serde(default)]
+    pub visible_edge_gaps: Option<[i32; 4]>,
+    /// Conscia's visible inset before layout fitting, in physical pixels (top, bottom,
+    /// left, right). Use this for panel reservations, and visible_edge_gaps for painting:
+    /// fitting corrections must not feed back into the reserved working area.
+    #[serde(default)]
+    pub bar_gap_reference: Option<[i32; 4]>,
 }
 
 /// Configured keyboard layouts.

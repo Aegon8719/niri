@@ -23,6 +23,37 @@ impl Rect {
             && y < (self.y as f64 + self.height as f64)
     }
 }
+#[derive(Clone, Copy, Debug)]
+pub struct TileRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Insets are in displayed pixels, including when a group is a scaled thumbnail.
+pub fn inset_in_group(rect: Rect, group: Rect, scale: (f64, f64), outer: f64) -> TileRect {
+    let padding = |edge: bool| if edge { outer } else { outer / 2. };
+    let fit = |before: f64, after: f64, extent: f64| {
+        let factor = if before + after > 0. {
+            ((extent - 1.).max(0.) / (before + after)).min(1.)
+        } else { 1. };
+        (before * factor, after * factor)
+    };
+    let width = rect.width as f64 * scale.0;
+    let height = rect.height as f64 * scale.1;
+    let (left, right) = fit(padding(rect.x == group.x),
+        padding(rect.x + rect.width == group.x + group.width), width);
+    let (top, bottom) = fit(padding(rect.y == group.y),
+        padding(rect.y + rect.height == group.y + group.height), height);
+    TileRect {
+        x: (rect.x - group.x) as f64 * scale.0 + left,
+        y: (rect.y - group.y) as f64 * scale.1 + top,
+        width: width - left - right,
+        height: height - top - bottom,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowRole {
     Main,
@@ -360,4 +391,63 @@ pub fn with_offset(mut layout: LayoutSnapshot, offset: f64) -> LayoutSnapshot {
         p.opacity = if visible { 1. } else { 0. };
     }
     layout
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::tiling::{Dock, Tree};
+
+    fn close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9, "{a} != {b}");
+    }
+
+    #[test]
+    fn nested_split_gaps_are_half_group_gaps() {
+        let group = Rect { x: 17, y: 23, width: 1200, height: 900 };
+        let mut tree = Tree::Leaf(WindowId(1));
+        tree.insert(WindowId(1), Tree::Leaf(WindowId(2)), Dock::Right);
+        tree.insert(WindowId(2), Tree::Leaf(WindowId(3)), Dock::Bottom);
+        let cells = tree.geometry(group).0;
+        for scale in [1., 1. / 3., 0.25] {
+            for gap in [0., 1., 6., 12., 17., 32.] {
+                let outer = gap / 2.;
+                let tiles: Vec<_> = cells.iter().map(|(_, cell)|
+                    inset_in_group(*cell, group, (scale, scale), outer)).collect();
+                let [a, b, c] = tiles.as_slice() else { panic!() };
+                close(b.x - a.x - a.width, gap / 2.);
+                close(c.x - a.x - a.width, gap / 2.);
+                close(c.y - b.y - b.height, gap / 2.);
+                close(a.x, outer);
+                close(a.y, outer);
+                close(group.width as f64 * scale - b.x - b.width, outer);
+                close(group.height as f64 * scale - c.y - c.height, outer);
+                let neighbor = inset_in_group(group, group, (scale, scale), outer);
+                close(group.width as f64 * scale + neighbor.x - b.x - b.width, gap);
+                close(group.height as f64 * scale + neighbor.y - c.y - c.height, gap);
+            }
+        }
+    }
+
+    #[test]
+    fn unsplit_group_keeps_its_outer_padding() {
+        let group = Rect { x: 50, y: 70, width: 1200, height: 900 };
+        let rect = inset_in_group(group, group, (1., 1.), 10.);
+        close(rect.x, 10.);
+        close(rect.y, 10.);
+        close(rect.width, 1180.);
+        close(rect.height, 880.);
+    }
+
+    #[test]
+    fn tiny_tiles_keep_nonnegative_sizes() {
+        let group = Rect { x: 0, y: 0, width: 100, height: 100 };
+        for extent in [0, 1, 2, 10] {
+            let cell = Rect { width: extent, height: extent, ..group };
+            let rect = inset_in_group(cell, group, (0.25, 0.25), 20.);
+            assert!(rect.width >= 0. && rect.height >= 0.);
+            assert!(rect.x + rect.width <= extent as f64 * 0.25);
+            assert!(rect.y + rect.height <= extent as f64 * 0.25);
+        }
+    }
 }

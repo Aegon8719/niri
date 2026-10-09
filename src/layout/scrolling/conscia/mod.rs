@@ -131,33 +131,39 @@ impl<I: PartialEq + Clone> State<I> {
 
     pub fn target_scene(&self) -> Vec<SceneItem> {
         let Some(layout) = &self.layout else { return Vec::new(); };
+        self.scene_for_layout(layout)
+    }
+
+    fn scene_for_layout(&self, layout: &LayoutSnapshot) -> Vec<SceneItem> {
         let canvas = Rect { x: 0, y: 0,
             width: layout.reel.width * layout.slot_count as i32,
             height: layout.reel.height };
         let mut result = Vec::new();
-        for item in scene::scene(layout, self.model.offset()) {
+        let fullscreen = self.expanded.is_some_and(|(_, fullscreen)| fullscreen);
+        for (mut item, placement) in scene::scene(layout, self.model.offset()).into_iter().zip(&layout.placements) {
+            if fullscreen { result.push(item); continue; }
             let members = self.model.reel_group(item.window);
             if members.is_empty() || canvas.width <= 0 || canvas.height <= 0 {
+                let group = if item.role == WindowRole::Main { layout.main } else { placement.rect };
+                let rect = geometry::inset_in_group(placement.rect, group, (1., 1.),
+                    self.inset as f64);
+                item.x += rect.x - (placement.rect.x - group.x) as f64;
+                item.y += rect.y - (placement.rect.y - group.y) as f64;
+                item.width = rect.width;
+                item.height = rect.height;
                 result.push(item);
                 continue;
             }
             let Some(tree) = self.tree(item.window) else { continue; };
             let rects = tree.geometry(canvas).0;
-            let sx = item.width / canvas.width as f64;
-            let sy = item.height / canvas.height as f64;
+            let scale = (item.width / canvas.width as f64, item.height / canvas.height as f64);
             for (window, rect) in rects {
+                let rect = geometry::inset_in_group(rect, canvas, scale,
+                    self.inset as f64);
                 result.push(SceneItem { window,
-                    x: item.x + rect.x as f64 * sx, y: item.y + rect.y as f64 * sy,
-                    width: rect.width as f64 * sx, height: rect.height as f64 * sy,
+                    x: item.x + rect.x, y: item.y + rect.y,
+                    width: rect.width, height: rect.height,
                     ..item.clone() });
-            }
-        }
-        if !self.expanded.is_some_and(|(_, fullscreen)| fullscreen) {
-            for item in &mut result {
-                let x = (self.inset as f64).min(((item.width - 1.) / 2.).floor().max(0.));
-                let y = (self.inset as f64).min(((item.height - 1.) / 2.).floor().max(0.));
-                item.x += x; item.y += y;
-                item.width -= x * 2.; item.height -= y * 2.;
             }
         }
         result
@@ -288,6 +294,14 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         self.active_column_idx = self.active_column_idx.min(self.columns.len().saturating_sub(1));
     }
 
+    pub fn conscia_edge_gap_reference(&self) -> f64 {
+        let ring = &self.options.layout.focus_ring;
+        let width = if ring.off { 0. } else {
+            (ring.width * self.scale).round().max(1.) / self.scale
+        };
+        (f64::from(self.conscia.inset) - width).max(0.)
+    }
+
     pub(super) fn conscia_relayout(&mut self) {
         let ring = &self.options.layout.focus_ring;
         let ring_width = if ring.off { 0. } else { ring.width };
@@ -337,7 +351,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         }
         let main = layout.main;
         self.conscia.sync_trees(main);
-        let mut sizes = Vec::new();
         if let Some(anchor) = self.conscia.model.main() {
             if let Some(tree) = self.conscia.tree(anchor) {
                 layout.placements.retain(|p| p.role != WindowRole::Main);
@@ -348,12 +361,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 }
             }
         }
-        for p in &layout.placements {
-            if p.role == WindowRole::Main { sizes.push((p.window, p.rect)); }
-        }
-        for &anchor in self.conscia.model.windows().iter().skip(1) {
-            if let Some(tree) = self.conscia.tree(anchor) { sizes.extend(tree.geometry(main).0); }
-        }
         if let Some(id) = self.conscia.parked {
             if layout.slot_count > 0 {
                 layout.placements.push(geometry::Placement { window: id,
@@ -361,7 +368,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                     rect: Rect { height: layout.reel.height / layout.slot_count as i32, ..layout.reel },
                     scale: 1. / layout.slot_count as f64, opacity: 1. });
             }
-            sizes.push((id, main));
         }
         if let Some((expanded, _)) = self.conscia.expanded {
             layout.main = area;
@@ -372,9 +378,9 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                     p.rect = area; p.scale = 1.; p.role = WindowRole::Main;
                 } else { p.role = WindowRole::Hidden; p.opacity = 0.; }
             }
-            for (id, rect) in &mut sizes { if *id == expanded { *rect = area; } }
         }
         self.conscia.model.clamp_offset(layout.slot_count);
+        let target_scene = self.conscia.scene_for_layout(&layout);
         for col in &mut self.columns {
             col.is_pending_fullscreen = false;
             col.is_pending_maximized = false;
@@ -385,19 +391,21 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                     tile.window_mut().request_size((0, 0).into(), SizingMode::Normal, false, None);
                     continue;
                 }
-                let rect = sizes.iter().find(|(key, _)| *key == id).map_or(main, |(_, r)| *r);
                 let mode = match self.conscia.expanded {
                     Some((key, true)) if key == id => { col.is_pending_fullscreen = true; SizingMode::Fullscreen }
                     Some((key, false)) if key == id => { col.is_pending_maximized = true; SizingMode::Maximized }
                     _ => SizingMode::Normal,
                 };
-                let rect = if mode == SizingMode::Fullscreen { rect } else { rect.inset(self.conscia.inset) };
-                let size = (rect.width.max(1) as f64, rect.height.max(1) as f64).into();
+                // Match the padded thumbnail's aspect ratio before uniform rendering scale.
+                let size = target_scene.iter().find(|item| item.window == id && item.scale > 0.)
+                    .map(|item| ((item.width / item.scale).round().max(1.),
+                        (item.height / item.scale).round().max(1.)).into())
+                    .unwrap_or_else(|| (main.width.max(1) as f64, main.height.max(1) as f64).into());
                 match mode {
                     SizingMode::Normal => tile.request_tile_size(size, false, None),
                     SizingMode::Maximized => tile.request_maximized(size, false, None),
                     SizingMode::Fullscreen => tile.window_mut().request_size(
-                        (rect.width.max(1), rect.height.max(1)).into(), mode, false, None),
+                        (area.width.max(1), area.height.max(1)).into(), mode, false, None),
                 }
             }
         }
@@ -845,9 +853,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         let placements = preview.geometry(layout.main).0;
         if placements.iter().all(|(_, r)| r.width >= minimum && r.height >= minimum) {
             let hint = placements.iter().find(|(id, _)| *id == drag.window).map(|(_, rect)| {
-                let rect = rect.inset(inset);
-                Rectangle::new((rect.x as f64 + layout.origin_offset.0, rect.y as f64 + layout.origin_offset.1).into(),
-                    (rect.width as f64, rect.height as f64).into())
+                let rect = geometry::inset_in_group(*rect, layout.main, (1., 1.), inset as f64);
+                Rectangle::new((layout.main.x as f64 + rect.x + layout.origin_offset.0,
+                    layout.main.y as f64 + rect.y + layout.origin_offset.1).into(),
+                    (rect.width, rect.height).into())
             });
             drag.set_hint(hint, now, animate);
             drag.preview = Some(preview);
