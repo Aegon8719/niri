@@ -1,4 +1,4 @@
-//! Conscia's Main/Reel policy, hosted by niri's workspace and protocol machinery.
+//! Conscia layout policy, hosted by niri's workspace and protocol machinery.
 //!
 //! `core`, `geometry`, and `scene` are vendored from ../Conscia. Columns are only
 //! transport containers for niri's workspace/output actions, never layout authority.

@@ -1470,15 +1470,18 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 && !self.conscia.model.in_main(p.window) {
                 let width = size.w * factor;
                 let height = size.h * factor;
-                if width >= 32. && height >= 32. {
+                let icon_size = crate::render_helpers::app_icon::ICON_SIZE;
+                let icon_extent = f64::from(icon_size);
+                if width >= 8. + icon_extent && height >= 8. + icon_extent {
+                    // Always anchor to the bottom corner facing the Main area.
                     let x = if self.conscia.model.side == conscia::core::ReelSide::Left {
-                        pos.x + 8.
-                    } else { pos.x + width - 8. - 24. };
-                    let location = Point::from((x, pos.y + height - 8. - 24.));
+                        pos.x + width - 8. - icon_extent
+                    } else { pos.x + 8. };
+                    let location = Point::from((x, pos.y + height - 8. - icon_extent));
                     let buffer = self.reel_icons.get(window.app_id().as_deref(), self.scale);
                     if let Ok(element) = smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement::from_buffer(
                         ctx.renderer, location.to_physical_precise_round::<_, i32>(scale).to_f64(),
-                        &buffer, Some(p.opacity), None, Some(Size::from((24, 24))),
+                        &buffer, Some(p.opacity), None, Some(Size::from((icon_size, icon_size))),
                         smithay::backend::renderer::element::Kind::Unspecified,
                     ) {
                         let bounds = Rectangle::new(pos, Size::from((width, height)))

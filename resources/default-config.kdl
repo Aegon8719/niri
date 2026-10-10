@@ -107,7 +107,7 @@ input {
     position x=1280 y=0
 }
 
-// Conscia Focus/Reel is the default layout. See README.md.
+// Conscia is the default layout. See README.md.
 // Its outer ratio and integer slot count come from Conscia; the old column-width
 // and centering settings are accepted for configuration compatibility.
 // Settings that influence how windows are positioned and sized.

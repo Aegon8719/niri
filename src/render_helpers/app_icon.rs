@@ -10,7 +10,7 @@ use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::memory::MemoryRenderBuffer;
 use smithay::utils::Transform;
 
-const ICON_SIZE: i32 = 24;
+pub const ICON_SIZE: i32 = 48;
 type Key = (String, i32);
 type Reply = (Key, Option<Vec<u8>>);
 
@@ -45,7 +45,7 @@ impl AppIconCache {
     }
 
     pub fn get(&self, app_id: Option<&str>, scale: f64) -> MemoryRenderBuffer {
-        // Oversample fractional outputs while retaining exactly 24 logical pixels.
+        // Oversample fractional outputs while retaining exactly 48 logical pixels.
         let scale = scale.ceil().clamp(1., 8.) as i32;
         let key = (app_id.unwrap_or_default().to_owned(), scale);
         let mut cache = self.0.borrow_mut();
@@ -106,7 +106,8 @@ fn fallback(size: i32) -> Vec<u8> {
     let mut pixels = vec![0; (size * size * 4) as usize];
     for y in 0..size {
         for x in 0..size {
-            let (lx, ly) = (x * ICON_SIZE / size, y * ICON_SIZE / size);
+            // The fallback artwork uses a 24-unit grid, independent of display size.
+            let (lx, ly) = (x * 24 / size, y * 24 / size);
             if !(2..22).contains(&lx) || !(3..21).contains(&ly) { continue; }
             let color = if ly < 7 { [99, 102, 241, 255] }
                 else if lx == 2 || lx == 21 || ly == 20 { [160, 164, 184, 255] }
