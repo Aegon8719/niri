@@ -135,6 +135,9 @@ pub trait LayoutElement {
     /// Unique ID of this element.
     fn id(&self) -> &Self::Id;
 
+    /// Desktop application identity for compositor-owned decorations.
+    fn app_id(&self) -> Option<String> { None }
+
     /// Updates the config for the element.
     fn update_config(&mut self, blur_config: niri_config::Blur) {
         let _ = blur_config;

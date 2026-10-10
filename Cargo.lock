@@ -2224,6 +2224,8 @@ dependencies = [
  "drm-ffi",
  "fastrand",
  "futures-util",
+ "gdk-pixbuf",
+ "gio",
  "git-version",
  "glam",
  "input",

@@ -622,6 +622,10 @@ impl Drop for Mapped {
 impl LayoutElement for Mapped {
     type Id = Window;
 
+    fn app_id(&self) -> Option<String> {
+        with_toplevel_role(self.toplevel(), |role| role.app_id.clone())
+    }
+
     fn id(&self) -> &Self::Id {
         &self.window
     }

@@ -1,144 +1,311 @@
-> 此 fork 的默认窗口布局已改为 Conscia Main/Reel。行为及快捷键映射见 [移植说明](docs/conscia-port.md)。
+# Conscia — Main/Reel Wayland 桌面
 
-<h1 align="center"><img alt="niri" src="https://github.com/user-attachments/assets/07d05cd0-d5dc-4a28-9a35-51bae8f119a0"></h1>
-<p align="center">A scrollable-tiling Wayland compositor.</p>
-<p align="center">
-    <a href="https://matrix.to/#/#niri:matrix.org"><img alt="Matrix" src="https://img.shields.io/badge/matrix-%23niri-blue?logo=matrix"></a>
-    <a href="https://github.com/niri-wm/niri/blob/main/LICENSE"><img alt="GitHub License" src="https://img.shields.io/github/license/niri-wm/niri"></a>
-    <a href="https://github.com/niri-wm/niri/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/niri-wm/niri?logo=github"></a>
-</p>
+Conscia 是基于 niri 的 Wayland 合成器分支，使用 **Main 主区域 + Reel 小窗列** 管理窗口。
+Main 支持 Dwindle 分屏，Reel 显示其余窗口的实时缩略图；每个输出、每个工作区独立保存窗口组和分割树。
+项目保留 niri 的 DRM/Wayland 后端、输出热插拔、动态工作区、配置热重载、IPC、截图、屏幕共享、锁屏及 layer-shell 支持。
 
-<p align="center">
-    <a href="https://niri-wm.github.io/niri/Getting-Started.html">Getting Started</a> | <a href="https://niri-wm.github.io/niri/Configuration%3A-Introduction.html">Configuration</a> | <a href="https://github.com/niri-wm/niri/discussions/325">Setup&nbsp;Showcase</a>
-</p>
+本页说明当前 Conscia 实现及仓库默认绑定。已安装的用户配置不会随二进制更新被覆盖，实际快捷键以
+`~/.config/niri/config.kdl` 及其包含文件为准。上游文档中无限滚动列、热角和拖拽边缘激活等描述不适用于此分支。
 
-<img width="1280" height="720" alt="niri with a few windows open" src="https://github.com/user-attachments/assets/dea5909e-1859-4aaa-9d88-d37f9663e00b" />
+## 布局与窗口生命周期
 
-## About
+- **新窗口**默认获得焦点并进入右侧 Main；原 Main 窗口组进入左侧 Reel 前端，Reel 滚动位置归零。后台打开规则和瞬态对话框例外。
+- **提升小窗**会将其所在组切换到 Main，原 Main 组回到 Reel 前端，同时 Reel 翻到另一侧。再次打开新应用时恢复左 Reel、右 Main。
+- **Reel 为空**时，Main 自动铺满可用工作区；出现独立 Reel 窗口组后恢复侧边小窗列。面板保留，显式最大化和全屏状态独立处理。
+- **窗口组**保留内部 Dwindle 排列和比例：移入 Reel、再次提升以及整组迁移工作区时均保留。
+- **最小化**将窗口送到 Reel；唯一窗口最小化后仍保留缩略图，可点击或用 `Mod+Tab` 恢复。
+- **关闭 Main 窗口**后由 Reel 接替，其他小窗同步补位；只剩一个窗口时自动展开。
+- **瞬态对话框**不加入 Reel，跟随所属 Main 窗口的可见性并在 Main 区居中。
+- **工作区**纵向排列，每个输出至少保留两个；多余未命名空工作区仍按动态规则回收。保留输出断开、重接及工作区迁移支持。
+- **浮动窗口**通过显式规则或动作启用；普通新窗口默认进入 Main/Reel，不使用上游浮动启发式。
 
-Windows are arranged in columns on an infinite strip going to the right.
-Opening a new window never causes existing windows to resize.
+Reel 自动选择 3 或 4 个槽位，窗口画面保持宽高比缩放，客户端仍按 Main 尺寸配置。
+浏览 Reel 不改变窗口顺序或键盘焦点。高精度滚动累计到整槽后提交，反向或间隔超过 140ms 时清空余量。
+已经抵达边界后继续向外滚动会出现 300ms、最大 32 逻辑像素的压缩回弹，不把小窗移出工作区。
 
-Every monitor has its own separate window strip.
-Windows can never "overflow" onto an adjacent monitor.
+窗口提升、分组调整、新窗口入场和关闭后的接替使用 220ms smoothstep 动画。
+新窗口从右侧滑入；隐藏端点使用淡入淡出。`animations { off; }` 可关闭动画。
 
-Workspaces are dynamic and arranged vertically.
-Every monitor has an independent set of workspaces, and there's always one empty workspace present all the way down.
+## 交互约定
 
-The workspace arrangement is preserved across disconnecting and connecting monitors where it makes sense.
-When a monitor disconnects, its workspaces will move to another monitor, but upon reconnection they will move back to the original monitor.
+**Mod** 在原生桌面会话中为 **Super / Windows 键**。方向键指 `Left / Right / Up / Down`。
+**向内**指向 Main 与 Reel 的交界，**向外**指向各自区域外侧的屏幕边缘；Reel 翻转后方向随之翻转。
+触屏按首次落指位置确定目标，触控板按手势开始时的光标位置确定目标；关闭操作向起点窗口发送正常关闭请求。
 
-## Features
+### Touch — 触屏
 
-- Built from the ground up for scrollable tiling
-- [Dynamic workspaces](https://niri-wm.github.io/niri/Workspaces.html) like in GNOME
-- An [Overview](https://github.com/user-attachments/assets/379a5d1f-acdb-4c11-b36c-e85fd91f0995) that zooms out workspaces and windows
-- Built-in screenshot UI
-- Monitor and window screencasting through xdg-desktop-portal-gnome
-    - You can [block out](https://niri-wm.github.io/niri/Configuration%3A-Window-Rules.html#block-out-from) sensitive windows from screencasts
-    - [Dynamic cast target](https://niri-wm.github.io/niri/Screencasting.html#dynamic-screencast-target) that can change what it shows on the go
-- [Touchpad](https://github.com/niri-wm/niri/assets/1794388/946a910e-9bec-4cd1-a923-4a9421707515) and [mouse](https://github.com/niri-wm/niri/assets/1794388/8464e65d-4bf2-44fa-8c8e-5883355bd000) gestures
-- Group windows into [tabs](https://niri-wm.github.io/niri/Tabs.html)
-- Configurable layout: gaps, borders, struts, window sizes
-- [Gradient borders](https://niri-wm.github.io/niri/Configuration%3A-Layout.html#gradients) with Oklab and Oklch support
-- [Background blur](https://niri-wm.github.io/niri/Window-Effects.html) for windows and layer-shell surfaces
-- [Animations](https://github.com/niri-wm/niri/assets/1794388/ce178da2-af9e-4c51-876f-8709c241d95e) with support for [custom shaders](https://github.com/niri-wm/niri/assets/1794388/27a238d6-0a22-4692-b794-30dc7a626fad)
-- Live-reloading config
-- Works with [screen readers](https://niri-wm.github.io/niri/Accessibility.html)
+| 位置 | 操作 | 行为 |
+| --- | --- | --- |
+| Reel 小窗或窗口组槽位 | 单指点击 | 将对应窗口组提升为 Main |
+| Reel | 单指纵向滑动 | 浏览小窗列，不改变焦点 |
+| Reel 小窗 | 单指水平向内滑动 | 将对应小窗所在组加入 Main 分屏 |
+| Reel 小窗 | 单指水平向外滑动 | 关闭起点对应的小窗应用 |
+| Main 标题栏 | 单指快速水平向外滑动 | 关闭起点对应的 Main 应用 |
+| Main 分屏标题栏 | 单指快速水平向内滑动 | 将对应分屏窗口单独还原到 Reel |
+| Main 分屏标题栏 | 停留后单指拖动 | 整理分屏位置，松手提交；落点规则见下文 |
+| Main 标题栏 | 未移动的单指点击 | 交给客户端，保留标题栏按钮点击 |
+| Main 应用内容 | 单指、双指触摸 | 交给应用处理 |
+| Main 内 | 三指张开 | 展开整个 Main、隐藏 Reel，保留分屏 |
+| 已展开 Main 内 | 三指捏合 | 恢复 Main/Reel |
+| 工作区 | 三指向上／向下滑动 | 切换到上方／下方工作区 |
+| 工作区／概览 | 四指向上／向下滑动 | 打开／关闭工作区概览 |
+| 工作区 | 三指水平滑动 | 不执行桌面动作 |
+| 概览 | 单指点击窗口或工作区 | 选择目标并离开概览 |
+| 概览 | 单指纵向滑动 | 浏览工作区 |
+| 概览 | 单指横向滑动 | 通过兼容视图滚动接口浏览该工作区的 Reel |
+| 概览窗口 | 停留约 500ms 后移动 | 进入已有窗口拖动路径；平铺窗口仍使用 Main 整理规则 |
+| 截图界面 | 单指拖动／点击截图按钮 | 框选区域／确认截图 |
+| 截图框选期间 | 第二指参与移动 | 平移当前选区 |
 
-## Video Demo
+触屏标题栏热区是窗口顶部 **32 个逻辑像素**，因为 Wayland 客户端装饰不提供统一的标题栏区域信息。
+单指水平滑动至少 **80 个逻辑像素**，水平位移大于垂直位移的两倍。
+Main 标题栏在落指后 **250ms** 内达到水平阈值时锁定滑动；未锁定滑动、停留 250ms 后移动则进入分屏拖拽。
+Reel 纵向移动达到 **10 个逻辑像素**且以纵向为主时锁定滚动，之后不会转为点击或关闭。
 
-https://github.com/niri-wm/niri/assets/1794388/bce834b0-f205-434e-a027-b373495f9729
+三指缩放要求三个落点均在 Main 内，初始平均半径至少 20，半径变化至少 30 逻辑像素，比例达到 **1.25 / 0.75**。
+三指先判断缩放，再判断工作区纵向滑动；纵向动作至少 80 逻辑像素且纵向位移大于横向的两倍。
+多指操作在首次抬指时提交一次，按本轮最多手指数分类，四指退回三指不会再触发缩放。
+第二指落下取消标题栏拖拽；第三指落下时取消已转交应用的触摸序列并由桌面接管。
+锁屏、截图和 MRU 选择界面使用各自交互；工作区变化、输出移除或触摸取消会放弃未提交的 Conscia 动作。
 
-Also check out these videos that showcase a lot of the niri functionality:
+### TouchPad — 触控板
 
-- [Niri Is My New Favorite Wayland Compositor](https://www.youtube.com/watch?v=DeYx2exm04M) by Brodie Robertson
-- [How Is niri This Good? Live Demo + Config](https://www.youtube.com/watch?v=7XmD5UyyhZQ) by Nick Janetakis
+| 位置 | 操作 | 行为 |
+| --- | --- | --- |
+| 任意位置 | 单指移动 | 移动光标 |
+| Reel | 二指纵向滚动 | 浏览小窗列 |
+| Reel 小窗 | 二指水平向外滑动 | 关闭手势起点光标对应的小窗 |
+| Reel | 二指水平向内滑动 | 不执行加入分屏动作 |
+| 工作区，包括光标位于 Reel 时 | 三指上下滑动 | 切换工作区 |
+| 工作区，包括光标位于 Reel 时 | 四指上滑／下滑 | 打开／关闭概览 |
+| 工作区 | 三指横向滑动 | 不执行桌面动作 |
+| 应用 | 捏合／张开、停留手势 | 交给应用，不展开或恢复 Main |
+| 应用 | 二指滚动 | 应用自己的滚动；Reel 区由桌面接管 |
+| 概览 | 二指滚动 | 纵向浏览工作区，横向经兼容接口浏览 Reel |
+| 小窗、标题栏或分割线 | 点击、按住按键拖动 | 与下文 Mouse Click 相同 |
 
-## Status
+默认配置启用轻触点击和自然滚动；轻触对应哪个鼠标键取决于 libinput／用户配置。
+触控板的二指滚动由 `Finger` 轴事件识别，应使用二指滚动模式。
+纵向滚动遵循自然滚动设置；关闭小窗按**物理手指向外方向**判断，不随自然滚动反转。
+二指位移达到 10 且主方向大于另一方向 1.5 倍时锁定滚动或水平动作；向外关闭要求水平位移至少 80 且大于纵向两倍，在两轴停止时提交。
+三指、四指不再被 Reel 滚动截获。触控板工作区和概览保持跟手动画，最终方向、距离和速度决定停靠结果；触屏则在抬指时提交。
 
-Niri is stable for day-to-day use and does most things expected of a Wayland compositor.
-Many people are daily-driving niri, and are happy to help in our [Matrix channel].
+两端尚未统一的功能：触屏单指向内加入／退出分屏、Main 标题栏向外关闭、三指展开／恢复 Main，在触控板上没有对应桌面手势。
+触控板仍通过右键、快捷键和按键拖动完成相关操作。
 
-Give it a try!
-Follow the instructions on the [Getting Started](https://niri-wm.github.io/niri/Getting-Started.html) page.
-Grab a desktop shell like [DankMaterialShell] or [Noctalia] (or build a more traditional setup): niri by itself is not a complete desktop environment.
-Also check out [awesome-niri], a list of niri-related links and projects.
+### KeyBoard Shortcuts — 键盘快捷键
 
-Here are some points you may have questions about:
+以下包含 [默认配置](resources/default-config.kdl) 中显示和隐藏于快捷键面板的全部绑定。
+组合写法中的 `/` 表示可选按键；例如 `Mod+U / Mod+Down` 是两个等价绑定，不是同时按下。
+同一单元格中省略修饰键的方向或字母沿用前项修饰键，例如 `Mod+Alt+Left / Right` 表示两种 Mod+Alt 组合。
+应用启动器和锁屏命令依赖 DMS；终端默认使用 Alacritty。
 
-- **Multi-monitor**: yes, a core part of the design from the very start. Mixed DPI works.
-- **Fractional scaling**: yes, plus all niri UI stays pixel-perfect.
-- **NVIDIA**: seems to work fine.
-- **Floating windows**: yes, starting from niri 25.01.
-- **Input devices**: niri supports tablets, touchpads, and touchscreens.
-You can map the tablet to a specific monitor, or use [OpenTabletDriver].
-We have touchpad gestures, but no touchscreen gestures yet.
-- **Wlr protocols**: yes, we have most of the important ones like layer-shell, gamma-control, screencopy.
-You can check on [wayland.app](https://wayland.app) at the bottom of each protocol's page.
-- **Performance**: while I run niri on beefy machines, I try to stay conscious of performance.
-I've seen someone use it fine on an Eee PC 900 from 2008, of all things.
-- **Xwayland**: [integrated](https://niri-wm.github.io/niri/Xwayland.html#using-xwayland-satellite) via xwayland-satellite starting from niri 25.08.
+#### 常用操作与 Dwindle
 
-## Media
+| 按键 | 行为 |
+| --- | --- |
+| 单独短按两次 Super | 打开 DMS Spotlight 应用启动器 |
+| Mod+Return | 打开 Alacritty 终端 |
+| Mod+grave（反引号） | 显示快捷键面板 |
+| Mod+Tab / Mod+Right / Mod+H / Mod+Home | 提升 Reel 前端窗口组 |
+| Mod+End | 提升队列末端窗口组 |
+| Mod+F / Mod+Ctrl+F | 展开整个 Main 到可用工作区，再按恢复 |
+| Mod+BackSpace / Mod+W | 将 Main 的额外分屏窗口全部移入 Reel |
+| Mod+Q | 关闭当前窗口 |
+| Mod+Alt+Left / Right / Up / Down | 按几何方向切换 Main 分屏焦点 |
+| Mod+Shift+Left / Right / Up / Down | 与相应方向的 Main 相邻窗口交换位置 |
+| Mod+Ctrl+Left / Right | 将对应方向最近的分割宽度减小／增大 5% |
+| Mod+Ctrl+Up / Down | 将对应方向最近的分割高度减小／增大 5% |
+| Mod+J | 切换当前窗口最近分割的水平／垂直方向 |
+| Mod+Shift+J | 交换最近分割两侧的整个子组，保留内部排列和比例 |
+| Mod+K | 按 Main 分组顺序切换到上一个窗口 |
+| Mod+BracketLeft / Mod+BracketRight / Mod+Comma | 将 Reel 前端窗口组加入 Main 分屏 |
+| Mod+Period | 将当前 Main 分屏窗口还原到 Reel；无额外分屏时不操作 |
+| Mod+Minus / Mod+Equal | 减小／增大分割宽度 10% |
+| Mod+Shift+Minus / Mod+Shift+Equal | 减小／增大分割高度 10% |
+| Mod+Ctrl+R | 重置 Main 分割树的比例 |
+| Mod+Ctrl+J / Mod+Ctrl+K | Reel 向后／向前滚动一槽 |
+| Mod+Ctrl+H / Mod+Ctrl+L | 翻转 Reel 所在侧 |
+| Mod+Ctrl+Home / Mod+Ctrl+End | 翻转 Reel 所在侧 |
+| Mod+C / Mod+Ctrl+C | 翻转 Reel 所在侧 |
+| Mod+Shift+R / Mod+Ctrl+Shift+R | 兼容预设尺寸动作，当前实现为翻转 Reel |
+| Mod+Shift+F | 切换当前应用显式全屏 |
+| Mod+M | 切换当前应用的单窗口最大化（区别于 Mod+F 的整组展开） |
+| Mod+V | 切换当前窗口浮动／平铺 |
+| Mod+Shift+V | 在浮动与平铺区域间切换焦点 |
 
-[niri: Making a Wayland compositor in Rust](https://youtu.be/Kmz8ODolnDg?list=PLRdS-n5seLRqrmWDQY4KDqtRMfIwU0U3T) · *December 2024*
+双击 Super 要求每次按下不超过 250ms、两次释放间隔不超过 350ms，期间不能混入其他按键、鼠标按键或滚轮；锁屏和快捷键抑制期间不触发。
+`Mod+R`、`Mod+Shift+Tab`、`Mod+T` 当前没有默认绑定。普通 `Tab` 仍由应用处理。
 
-My talk from the 2024 Moscow RustCon about niri, and how I do randomized property testing and profiling, and measure input latency.
-The talk is in Russian, but I prepared full English subtitles that you can find in YouTube's subtitle language selector.
+#### 工作区与输出
 
-[An interview with Ivan, the developer behind Niri](https://www.trommelspeicher.de/podcast/special_the_developer_behind_niri) · *June 2025*
+| 按键 | 行为 |
+| --- | --- |
+| Mod+Up / Mod+I | 切换上一个工作区 |
+| Mod+Down / Mod+U | 切换下一个工作区 |
+| Mod+O | 打开／关闭工作区概览 |
+| Mod+2 … Mod+9 | 聚焦指定编号工作区；Mod+1 用于截图 |
+| Mod+Ctrl+1 … Mod+Ctrl+9 | 将当前窗口组移到指定工作区 |
+| Mod+Ctrl+Page_Up / Mod+Ctrl+I | 将当前窗口组移到上一个工作区 |
+| Mod+Ctrl+Page_Down / Mod+Ctrl+U | 将当前窗口组移到下一个工作区 |
+| Mod+Shift+Page_Up / Mod+Shift+I | 将当前工作区向上重排 |
+| Mod+Shift+Page_Down / Mod+Shift+U | 将当前工作区向下重排 |
+| Mod+Shift+H / K / L | 聚焦左／上／右侧输出；默认没有对应的向下字母绑定 |
+| Mod+Shift+Ctrl+Left / Down / Up / Right | 将当前窗口组移到对应方向输出 |
+| Mod+Shift+Ctrl+H / J / K / L | 同上，分别为左／下／上／右 |
 
-An interview by a German tech podcast Das Triumvirat (in English).
-We talk about niri development and history, and my experience building and maintaining niri.
+#### 截图、会话与系统
 
-[A tour of the niri scrolling-tiling Wayland compositor](https://lwn.net/Articles/1025866/) · *July 2025*
+| 按键 | 行为 |
+| --- | --- |
+| Mod+1 | 打开区域截图界面 |
+| Ctrl+Print | 截取当前屏幕 |
+| Alt+Print | 截取当前窗口 |
+| Mod+L | 调用 DMS 锁屏 |
+| Mod+Escape | 直接退出桌面会话 |
+| Mod+Shift+E / Ctrl+Alt+Delete | 打开退出确认框 |
+| Mod+Shift+Escape | 切换应用的键盘快捷键抑制状态 |
+| Mod+Shift+P | 关闭显示器 |
+| Super+Alt+S | 启动／结束 Orca 屏幕阅读器 |
+| XF86AudioRaiseVolume / XF86AudioLowerVolume | 输出音量增／减 10%，上限 100% |
+| XF86AudioMute / XF86AudioMicMute | 切换扬声器／麦克风静音 |
+| XF86AudioPlay / XF86AudioPause | 播放／暂停 |
+| XF86AudioStop | 停止播放 |
+| XF86AudioPrev / XF86AudioNext | 上一曲／下一曲 |
+| XF86MonBrightnessUp / XF86MonBrightnessDown | 屏幕背光增／减 10% |
+| 电源键 | 挂起系统，可通过 disable-power-key-handling 禁用该内置处理 |
+| VT 切换键（通常 Ctrl+Alt+F1 … F12） | 切换虚拟终端，适用于支持 VT 的后端 |
 
-An LWN article with a nice overview and introduction to niri.
+音量、媒体、亮度和 Orca 的默认绑定允许在锁屏时使用，依赖 `wpctl`、`playerctl`、`brightnessctl` 和 `orca`。
 
-[How to test a Wayland compositor?](https://youtu.be/w44fYK5z418?list=PLK4NE4dSsLlw) · *October 2026*
+#### 模式内键盘操作
 
-My talk about some testing techniques used in niri: property-based tests, snapshot tests, client-server tests.
-The first half overlaps with my RustCon talk, the second half is new.
-The talk is in Russian, but I prepared full English subtitles that you can find in YouTube's subtitle language selector.
+| 模式 | 按键 | 行为 |
+| --- | --- | --- |
+| 分屏拖动 | Esc | 取消整理，保留原布局 |
+| 概览 | Esc / Return | 关闭概览 |
+| 概览 | Left / Right | 调用左右列聚焦动作，Conscia 中提升 Reel 前端组 |
+| 概览 | Up / Down | 调用窗口或工作区上下聚焦动作 |
+| 截图 | Space / Return | 确认并保存截图 |
+| 截图 | Ctrl+C | 确认并复制，不写入截图文件 |
+| 截图 | P | 切换是否包含鼠标指针 |
+| 截图 | Esc | 取消截图 |
+| 截图拖动期间 | 按住 Space | 从改变选区大小切换为平移选区 |
+| 退出确认框 | Return | 确认退出 |
 
-## Contributing
+键盘快捷键可在配置中重绑定。MRU 等兼容动作仍可通过自定义绑定或 IPC 使用，但默认 `Mod+Tab` 是 Reel 提升，不是 MRU 切换器。
 
-If you'd like to help with niri, there are plenty of both coding- and non-coding-related ways to do so.
-See [CONTRIBUTING.md](https://github.com/niri-wm/niri/blob/main/CONTRIBUTING.md) for an overview.
+### Mouse Click — 鼠标点击、拖动与滚轮
 
-## Inspiration
+| 位置／条件 | 操作 | 行为 |
+| --- | --- | --- |
+| Main 应用 | 左键点击 | 聚焦窗口并将点击交给应用 |
+| Main 应用 | 右键点击 | 保留应用上下文菜单 |
+| Reel 小窗或组槽位（包含组内 gap） | 左键点击 | 提升对应组为 Main |
+| Reel 小窗或组槽位 | 右键点击 | 将对应组加入 Main 分屏 |
+| Reel | 纵向滚轮 | 浏览小窗列，不改变焦点 |
+| Reel | 其他按键 | 由桌面拦截，不转交缩略图内应用 |
+| Main 标题栏 | 按住左键拖动 | 移动超过 8 逻辑像素后进入 Dwindle 整理 |
+| Main 分割线 | 按住左键拖动 | 调整对应分割比例 |
+| Main 中可调整尺寸的边缘 | Mod+右键拖动 | 使用原生交互式尺寸调整路径；平铺只调整可命中的分割 |
+| 非浮动窗口的可调整边缘 | Mod+右键连续两次点击 | 相同水平边缘切换 Main 展开；相同垂直边缘重置分割比例 |
+| 普通工作区、光标不在 Reel | Mod+中键拖动 | 横向经兼容接口浏览 Reel，纵向切换工作区 |
+| 概览窗口／工作区 | 左键点击 | 选择目标并关闭概览 |
+| 概览窗口 | 左键拖动 | 已有窗口移动路径；平铺窗口仍使用 Main 整理规则 |
+| 概览工作区 | 右键横向拖动 | 经兼容视图接口浏览 Reel |
+| 概览 | 滚轮／二指滚动 | 浏览工作区或 Reel，无需 Mod |
+| 截图界面 | 左键拖动 | 创建或调整选区 |
+| 截图界面 | Mod+左键拖动／拖动时按 Space | 平移已有选区 |
+| 截图按钮 | 左键点击 | 确认截图 |
+| MRU 选择界面（自定义启用） | 左键点击条目／界面外 | 确认条目／取消选择 |
 
-Niri is heavily inspired by [PaperWM] which implements scrollable tiling on top of GNOME Shell.
+触控板模拟的左、右键也使用这套点击路径。Reel 点击和纵向滚动优先于配置中的鼠标绑定：即使按住 Mod，光标在 Reel 时仍先浏览小窗列。
 
-One of the reasons that prompted me to try writing my own compositor is being able to properly separate the monitors.
-Being a GNOME Shell extension, PaperWM has to work against Shell's global window coordinate space to prevent windows from overflowing.
+| 默认滚轮组合（非 Reel 优先处理区域） | 行为 |
+| --- | --- |
+| Mod+滚轮上／下 | 上一个／下一个工作区，150ms 冷却 |
+| Mod+Ctrl+滚轮上／下 | 将当前窗口组移到上一个／下一个工作区，150ms 冷却 |
+| Mod+滚轮左／右 | 提升 Reel 前端组 |
+| Mod+Shift+滚轮上／下 | 提升 Reel 前端组 |
+| Mod+Ctrl+滚轮左／右 | 翻转 Reel |
+| Mod+Ctrl+Shift+滚轮上／下 | 翻转 Reel |
 
-## Tile Scrollably Elsewhere
+## Dwindle 整理规则
 
-Here are some other projects which implement a similar workflow:
+Main 使用持久化二叉分割树。加入窗口时，按当前焦点区域的长宽选择水平或垂直分割。
+标题栏拖动到另一个窗口中央时交换位置，拖到左、右、上、下边缘时按相应方向贴靠分割。
+半屏窗口可与对侧等大子组整体交换，组内排列和比例保留。
+拖动只显示待提交位置的半透明圆角预览，其他窗口不动；松手后提交分割树并统一播放重布局动画。
+预览淡入淡出为 120ms。按 Esc 或拖出 Main 松手取消，切换工作区、锁屏、弹出对话框或工作区几何变化也会取消。
+窗口关闭只折叠对应分支；宽高快捷键修改当前窗口相应方向最近的分割，保留其他分支。
 
-- [PaperWM]: scrollable tiling on top of GNOME Shell.
-- [karousel]: scrollable tiling on top of KDE.
-- [scroll](https://github.com/dawsers/scroll) and [papersway]: scrollable tiling on top of sway/i3.
-- Hyprland has a built-in [scrolling layout](https://wiki.hypr.land/Configuring/Layouts/Scrolling-Layout/).
-- [Paneru] and [PaperWM.spoon]: scrollable tiling on top of macOS.
+主区域拖动不转换为上游无限列滚动、窗口移出或自动切换浮动。
+全局禁用热角、鼠标跟随焦点、拖拽边缘滚动／工作区切换以及拖拽悬停自动激活，配置不能重新启用这些路径。
+拖动期间不允许小窗激活或最小化请求替换整个 Main 组。
 
-## Contact
+## 外观与 Reel 应用图标
 
-Our main communication channel is a Matrix chat, feel free to join and ask a question: https://matrix.to/#/#niri:matrix.org
+Main/Reel 使用原生 focus-ring、边框和圆角。几何求解后向内扣除 `ceil(gaps / 2 + focus-ring.width)`，
+再从剩余空间扣除边框；渲染、客户端尺寸、点击区域和落点预览使用相同几何。
+缩略图按显示比例补偿圆角，所以 Main 与 Reel 的可见圆角一致。
+Main 整组展开保留分屏和桌面面板，显式应用全屏沿用全屏规则。
+默认焦点描边为蓝紫渐变；Conscia 桌面配置可在 DMS 配色之后包含 `conscia/appearance.kdl`。
 
-We also have a community Discord server: https://discord.gg/vT8Sfjy7sx
+Reel 每个可见小窗的应用图标位于**远离 Main 的底部角落**：左 Reel 的左下角、右 Reel 的右下角。
+图标固定 **24×24 逻辑像素**，距对应水平边缘和底边各 **8 逻辑像素**。
+位置和透明度使用缩略图当前动画帧数据，跟随移动、缩放、回弹和切换；图标独立叠加在画面上层，不改变布局、客户端尺寸或命中区域。
+Main 及其所有 Dwindle 分屏都不显示图标。缩略图宽或高不足 32 逻辑像素时暂不绘制覆盖层。
 
-[PaperWM]: https://github.com/paperwm/PaperWM
-[waybar]: https://github.com/Alexays/Waybar
-[fuzzel]: https://codeberg.org/dnkl/fuzzel
-[awesome-niri]: https://github.com/niri-wm/awesome-niri
-[karousel]: https://github.com/peterfajdiga/karousel
-[papersway]: https://spwhitton.name/tech/code/papersway/
-[Paneru]: https://github.com/karinushka/paneru
-[PaperWM.spoon]: https://github.com/mogenson/PaperWM.spoon
-[Matrix channel]: https://matrix.to/#/#niri:matrix.org
-[OpenTabletDriver]: https://opentabletdriver.net/
-[DankMaterialShell]: https://danklinux.com/
-[Noctalia]: https://noctalia.dev/
+图标通过应用 ID、桌面条目和 StartupWMClass 查找，支持图标文件、XDG 图标目录、主题继承和不同输出倍率；找不到时使用通用应用图标。
+文件读取和解码在后台线程运行，按应用 ID 和倍率缓存像素与渲染缓冲。图标依赖 GIO、GdkPixbuf 及系统可用的图像加载器。
+
+## 配置、构建与部署
+
+默认配置位于 [resources/default-config.kdl](resources/default-config.kdl)，使用 KDL。
+用户配置可重绑定快捷键、设置输入设备、显示器、窗口规则、间距、圆角和动画。更新程序不会覆盖现有配置。
+原生模板启动 `waybar`；采用 DMS 会话时应由桌面配置启动 DMS，避免重复启动面板。
+DMS、Alacritty、音量／媒体／亮度工具属于外部程序，不随合成器二进制构建。
+
+需要 Rust/Cargo、C 编译及链接工具、pkg-config，以及 Wayland、libinput、udev、GBM/EGL、libdisplay-info、Pango/Cairo、GIO、GdkPixbuf 等开发库；默认功能还使用 PipeWire 和 systemd 集成。
+GdkPixbuf 的 PNG、SVG 等格式支持取决于系统加载器；发行版可能使用 librsvg 或 glycin 提供解码。
+Fedora 上图标部分的开发包为 `gdk-pixbuf2-devel`，包管理器会解析其开发依赖。
+
+```sh
+# 在本仓库目录编译调试构建
+cargo build --locked --bin niri
+
+# 发布构建
+cargo build --locked --release --bin niri
+```
+
+依赖已缓存时可添加 `--offline`。调试产物为 `target/debug/niri`，发布产物为 `target/release/niri`。
+部署时使用会话启动配置实际引用的文件；若启动器已经链接到构建产物，成功编译即更新磁盘上的部署版本。
+**正在运行的合成器不会因文件更新而替换，需要注销并重新登录才能加载新程序。**
+使用现有 `niri-session`、systemd 用户服务及显示管理器会话入口启动；不要将新合成器直接覆盖启动到现有图形会话内。
+
+## 代码结构与兼容性
+
+| 路径 | 用途 |
+| --- | --- |
+| `src/layout/scrolling/conscia/core.rs` | 窗口队列、Main/Reel 分组、提升、最小化及组传输 |
+| `src/layout/scrolling/conscia/geometry.rs` | 整数槽位和布局几何求解 |
+| `src/layout/scrolling/conscia/scene.rs` | 场景、角色及过渡插值 |
+| `src/layout/scrolling/conscia/tiling.rs` | 持久化 Dwindle 树、贴靠、交换和分割比例 |
+| `src/layout/scrolling/conscia/mod.rs` | Conscia 模型与 niri Tile、窗口及工作区连接 |
+| `src/input/conscia.rs` | 鼠标仲裁及触控板二指 Reel 操作 |
+| `src/input/conscia_touch.rs` | 触屏手势识别和事件仲裁 |
+| `src/input/super_tap.rs` | 双击 Super 启动器识别 |
+| `src/render_helpers/app_icon.rs` | 桌面图标解析、后台解码与缓存 |
+| `src/layout/scrolling.rs` | 缩略图及图标覆盖层渲染、上游动作适配 |
+
+模型、几何和场景代码源自 Conscia，运行时不依赖相邻源码仓库。
+niri 的 Column 保留为窗口组传输容器，其顺序由 Conscia 模型重建，不再决定二维布局。
+保留原有配置和 IPC 动作名称：左右列聚焦映射为 Reel 提升，横向移动列和居中映射为 Reel 翻转，
+纵向移动映射为 Reel 浏览，tabbed-display 动作释放 Main 的额外分屏。工作区、输出和窗口组迁移仍使用原有接口。
+兼容动作在显式浮动窗口中可能使用浮动布局的原有行为。
+
+VMware 中 app-id 与标题均为 `vmware-user` 的边缘拖放辅助窗口只保留协议生命周期，
+不加入布局、焦点、任务列表或渲染，避免其短暂映射抢占 Main。
+
+本项目基于 [niri](https://github.com/niri-wm/niri)，保留上游版权和 [GPL-3.0 许可证](LICENSE)。
+其余通用配置说明见 [本地文档](docs/wiki/Getting-Started.md)，Conscia 特有交互及兼容差异以本页为准。

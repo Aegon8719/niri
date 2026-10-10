@@ -797,6 +797,64 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         true
     }
 
+    /// Stable touch target, role, title strip and outward direction in output coordinates.
+    pub fn conscia_touch_target(&self, pos: Point<f64, Logical>) -> (Option<W::Id>, bool, bool, f64) {
+        if !self.conscia.dialog_scene.is_empty() || self.conscia.expanded.is_some() {
+            return (None, false, false, 0.);
+        }
+        let reel = self.conscia_reel_at(pos);
+        let side = if self.conscia.model.side == ReelSide::Left { -1. } else { 1. };
+        let item = self.conscia.current_scene().into_iter().find(|p| p.opacity > 0.
+            && pos.x >= p.x && pos.x < p.x + p.width && pos.y >= p.y && pos.y < p.y + p.height);
+        // Retain the existing group-slot hit area for gaps between Reel tiles.
+        let item = item.or_else(|| {
+            if !reel { return None; }
+            let layout = self.conscia.layout.as_ref()?;
+            scene::scene(layout, self.conscia.model.offset()).into_iter().find(|p|
+                matches!(p.role, WindowRole::Reel { .. }) && p.opacity > 0.
+                && pos.x >= p.x && pos.x < p.x + p.width && pos.y >= p.y && pos.y < p.y + p.height)
+        });
+        let title = !reel && item.as_ref().is_some_and(|p| p.role == WindowRole::Main && pos.y < p.y + 32.);
+        let id = item.and_then(|p| self.conscia.ids.iter().find(|(_, id)| *id == p.window).map(|(id, _)| id.clone()));
+        (id, reel, title, if reel { side } else { -side })
+    }
+
+    pub fn conscia_touch_matches(&self, window: &W::Id, reel: bool) -> bool {
+        if !self.conscia.dialog_scene.is_empty() || self.conscia.expanded.is_some() { return false; }
+        self.conscia.id(window).is_some_and(|id| {
+            if reel { self.conscia.parked == Some(id) || (self.conscia.model.windows().iter().any(|&w| w == id || self.conscia.model.reel_group(w).contains(&id)) && !self.conscia.model.in_main(id)) }
+            else { self.conscia.model.in_main(id) }
+        })
+    }
+
+    pub fn conscia_touch_main_at(&self, pos: Point<f64, Logical>) -> bool {
+        self.conscia.layout.as_ref().is_some_and(|l| l.main.contains(pos.x - l.origin_offset.0, pos.y - l.origin_offset.1))
+    }
+
+    pub fn conscia_touch_expand(&mut self, expanded: bool) {
+        if self.conscia.main_maximized != expanded { self.toggle_full_width(); }
+    }
+
+    pub fn conscia_touch_promote(&mut self, window: &W::Id) {
+        let Some(id) = self.conscia.id(window) else { return; };
+        if self.conscia.parked == Some(id) { self.conscia_next(); return; }
+        let anchor = self.conscia.model.windows().iter().position(|&w| w == id || self.conscia.model.reel_group(w).contains(&id));
+        if let Some(index) = anchor { self.conscia_promote(index); }
+    }
+
+    pub fn conscia_touch_add(&mut self, window: &W::Id) {
+        let Some(id) = self.conscia.id(window) else { return; };
+        let anchor = self.conscia.model.windows().iter().position(|&w| w == id || self.conscia.model.reel_group(w).contains(&id));
+        if let Some(index) = anchor { self.conscia_add_main(index); }
+    }
+
+    pub fn conscia_touch_release(&mut self, window: &W::Id) {
+        if self.conscia.model.main_tiles().is_empty() || !self.conscia_can_edit() { return; }
+        let Some(id) = self.conscia.id(window) else { return; };
+        let from = self.conscia.current_scene();
+        if self.conscia.model.release_main(id, self.conscia.slots()) { self.conscia_changed(from, true); }
+    }
+
     pub fn conscia_drag_start(&mut self, pos: Point<f64, Logical>) -> bool {
         if !self.conscia_can_edit() { return false; }
         let Some(origin) = self.conscia.target_scene().into_iter().find(|item|

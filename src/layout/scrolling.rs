@@ -39,6 +39,7 @@ const VIEW_GESTURE_WORKING_AREA_MOVEMENT: f64 = 1200.;
 pub struct ScrollingSpace<W: LayoutElement> {
     conscia: conscia::State<W::Id>,
     snap_hint_element: InsertHintElement,
+    reel_icons: crate::render_helpers::app_icon::AppIconCache,
     /// Columns of windows on this space.
     columns: Vec<Column<W>>,
 
@@ -106,6 +107,8 @@ niri_render_elements! {
         ClosingWindow = ClosingWindowRenderElement,
         TabIndicator = TabIndicatorRenderElement,
         SnapHint = InsertHintRenderElement,
+        ReelIcon = smithay::backend::renderer::element::utils::CropRenderElement<
+            smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement<R>>,
         Conscia = smithay::backend::renderer::element::utils::CropRenderElement<
             smithay::backend::renderer::element::utils::RelocateRenderElement<
                 smithay::backend::renderer::element::utils::RescaleRenderElement<TileRenderElement<R>>>>,
@@ -336,6 +339,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         Self {
             conscia: conscia::State::new(),
             snap_hint_element: InsertHintElement::new(options.layout.insert_hint),
+            reel_icons: Default::default(),
             columns: Vec::new(),
             data: Vec::new(),
             active_column_idx: 0,
@@ -417,6 +421,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     pub fn are_animations_ongoing(&self) -> bool {
         self.conscia.transition.is_some() || self.conscia.reel_bounce.is_some()
             || self.conscia.snap_hint_animating()
+            || self.reel_icons.is_loading()
             || self.tiles().any(Tile::are_animations_ongoing)
     }
 
@@ -437,6 +442,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         for col in &mut self.columns {
             for tile in &mut col.tiles {
                 let id = state.id(tile.window().id());
+                if scene.iter().any(|p| Some(p.window) == id && p.opacity > 0.
+                    && matches!(p.role, conscia::geometry::WindowRole::Reel { .. })) {
+                    self.reel_icons.get(tile.window().app_id().as_deref(), self.scale);
+                }
                 let rect = scene.iter().find(|p| Some(p.window) == id)
                     .map(|p| Rectangle::new((-p.x, -p.y).into(), self.view_size))
                     .unwrap_or_else(|| Rectangle::from_size(self.view_size));
@@ -1454,6 +1463,33 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                             push(ScrollingSpaceRenderElement::Conscia(elem));
                         }
                     });
+            }
+            // Elements are front-to-back. Overlay after popups, before the thumbnail,
+            // without applying its content scale to the fixed-size logical icon.
+            if matches!(p.role, conscia::geometry::WindowRole::Reel { .. })
+                && !self.conscia.model.in_main(p.window) {
+                let width = size.w * factor;
+                let height = size.h * factor;
+                if width >= 32. && height >= 32. {
+                    let x = if self.conscia.model.side == conscia::core::ReelSide::Left {
+                        pos.x + 8.
+                    } else { pos.x + width - 8. - 24. };
+                    let location = Point::from((x, pos.y + height - 8. - 24.));
+                    let buffer = self.reel_icons.get(window.app_id().as_deref(), self.scale);
+                    if let Ok(element) = smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement::from_buffer(
+                        ctx.renderer, location.to_physical_precise_round::<_, i32>(scale).to_f64(),
+                        &buffer, Some(p.opacity), None, Some(Size::from((24, 24))),
+                        smithay::backend::renderer::element::Kind::Unspecified,
+                    ) {
+                        let bounds = Rectangle::new(pos, Size::from((width, height)))
+                            .to_physical_precise_round(scale);
+                        if let Some(bounds) = bounds.intersection(self.working_area.to_physical_precise_round(scale)) {
+                            if let Some(element) = CropRenderElement::from_element(element, scale, bounds) {
+                                push(ScrollingSpaceRenderElement::ReelIcon(element));
+                            }
+                        }
+                    }
+                }
             }
             let push_window = &mut |elem| {
                 let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), factor);

@@ -59,7 +59,8 @@ use crate::utils::{center, get_monotonic_time, CastSessionId, ResizeEdge};
 
 pub mod backend_ext;
 pub mod click_grab;
-mod conscia;
+pub(crate) mod conscia;
+pub mod conscia_touch;
 pub mod move_grab;
 pub mod pick_color_grab;
 pub mod pick_window_grab;
@@ -3194,7 +3195,11 @@ impl State {
         let (reel_delta, reel_slots) = if let Some(v120) = vertical_amount_v120 {
             (v120 / 120., true)
         } else { (event.amount(Axis::Vertical).unwrap_or(0.), false) };
-        if self.conscia_pointer_scroll(reel_delta, reel_slots) { return; }
+        if source == AxisSource::Finger {
+            let physical_x = event.amount(Axis::Horizontal).unwrap_or(0.)
+                * if event.relative_direction(Axis::Horizontal) == smithay::backend::input::AxisRelativeDirection::Inverted { -1. } else { 1. };
+            if self.conscia_touchpad_reel(event.amount(Axis::Horizontal), event.amount(Axis::Vertical), physical_x) { return; }
+        } else if self.conscia_pointer_scroll(reel_delta, reel_slots) { return; }
 
         let is_overview_open = self.niri.layout.is_overview_open();
 
@@ -4032,7 +4037,8 @@ impl State {
     }
 
     fn on_gesture_swipe_begin<I: InputBackend>(&mut self, event: I::GestureSwipeBeginEvent) {
-        if self.conscia_pointer_scroll(0., false) { return; }
+        self.niri.conscia_swipe_owned = false;
+        self.niri.conscia_pad_reel = Default::default();
 
         if self.niri.window_mru_ui.is_open() {
             // Don't start swipe gestures while in the MRU.
@@ -4040,11 +4046,13 @@ impl State {
         }
 
         if event.fingers() == 3 {
+            self.niri.conscia_swipe_owned = true;
             self.niri.gesture_swipe_3f_cumulative = Some((0., 0.));
 
             // We handled this event.
             return;
         } else if event.fingers() == 4 {
+            self.niri.conscia_swipe_owned = true;
             self.niri.layout.overview_gesture_begin();
             self.niri.queue_redraw_all();
 
@@ -4075,7 +4083,6 @@ impl State {
     ) where
         I::Device: 'static,
     {
-        if self.conscia_pointer_scroll(-event.delta_y(), false) { return; }
 
         let mut delta_x = event.delta_x();
         let mut delta_y = event.delta_y();
@@ -4097,8 +4104,6 @@ impl State {
             }
         }
 
-        let is_overview_open = self.niri.layout.is_overview_open();
-
         if let Some((cx, cy)) = &mut self.niri.gesture_swipe_3f_cumulative {
             *cx += delta_x;
             *cy += delta_y;
@@ -4109,25 +4114,8 @@ impl State {
                 self.niri.gesture_swipe_3f_cumulative = None;
 
                 if let Some(output) = self.niri.output_under_cursor() {
-                    if cx.abs() > cy.abs() {
-                        let output_ws = if is_overview_open {
-                            self.niri.workspace_under_cursor(true)
-                        } else {
-                            // We don't want to accidentally "catch" the wrong workspace during
-                            // animations.
-                            self.niri.output_under_cursor().and_then(|output| {
-                                let mon = self.niri.layout.monitor_for_output(&output)?;
-                                Some((output, mon.active_workspace_ref()))
-                            })
-                        };
-
-                        if let Some((output, ws)) = output_ws {
-                            let ws_idx = self.niri.layout.find_workspace_by_id(ws.id()).unwrap().0;
-                            self.niri
-                                .layout
-                                .view_offset_gesture_begin(&output, Some(ws_idx), true);
-                        }
-                    } else {
+                    // Horizontal three-finger swipes are intentionally consumed.
+                    if cy.abs() > cx.abs() {
                         self.niri
                             .layout
                             .workspace_switch_gesture_begin(&output, true);
@@ -4153,17 +4141,6 @@ impl State {
         let res = self
             .niri
             .layout
-            .view_offset_gesture_update(delta_x, timestamp, true);
-        if let Some(output) = res {
-            if let Some(output) = output {
-                self.niri.queue_redraw(&output);
-            }
-            handled = true;
-        }
-
-        let res = self
-            .niri
-            .layout
             .overview_gesture_update(-uninverted_delta_y, timestamp);
         if let Some(redraw) = res {
             if redraw {
@@ -4172,7 +4149,7 @@ impl State {
             handled = true;
         }
 
-        if handled {
+        if handled || self.niri.conscia_swipe_owned {
             // We handled this event.
             return;
         }
@@ -4194,15 +4171,10 @@ impl State {
 
     fn on_gesture_swipe_end<I: InputBackend>(&mut self, event: I::GestureSwipeEndEvent) {
         self.niri.gesture_swipe_3f_cumulative = None;
+        let owned = std::mem::take(&mut self.niri.conscia_swipe_owned);
 
         let mut handled = false;
         let res = self.niri.layout.workspace_switch_gesture_end(Some(true));
-        if let Some(output) = res {
-            self.niri.queue_redraw(&output);
-            handled = true;
-        }
-
-        let res = self.niri.layout.view_offset_gesture_end(Some(true));
         if let Some(output) = res {
             self.niri.queue_redraw(&output);
             handled = true;
@@ -4214,7 +4186,7 @@ impl State {
             handled = true;
         }
 
-        if handled {
+        if handled || owned {
             // We handled this event.
             return;
         }
@@ -4379,6 +4351,8 @@ impl State {
         };
         let slot = evt.slot();
 
+        if self.conscia_touch_down(evt.slot(), pos, evt.time()) { return; }
+
         let serial = SERIAL_COUNTER.next_serial();
 
         let under = self.niri.contents_under(pos);
@@ -4507,6 +4481,7 @@ impl State {
             return;
         };
         let slot = evt.slot();
+        if self.conscia_touch_up(slot, evt.time()) { return; }
 
         if let Some(capture) = self.niri.screenshot_ui.pointer_up(Some(slot)) {
             if capture {
@@ -4534,6 +4509,7 @@ impl State {
             return;
         };
         let slot = evt.slot();
+        if self.conscia_touch_motion(slot, pos, evt.time()) { return; }
 
         if let Some(output) = self.niri.screenshot_ui.selection_output().cloned() {
             let geom = self.niri.global_space.output_geometry(&output).unwrap();
@@ -4577,6 +4553,7 @@ impl State {
         let Some(handle) = self.niri.seat.get_touch() else {
             return;
         };
+        self.conscia_touch_cancel();
         handle.cancel(self);
     }
 

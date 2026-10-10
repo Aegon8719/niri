@@ -1,5 +1,27 @@
 //! Pointer arbitration for Conscia. Never forward a thumbnail click to a client.
 use super::*;
+use smithay::desktop::Window;
+use crate::layout::workspace::WorkspaceId;
+
+#[derive(Default)]
+pub(crate) struct PadReel {
+    sequence: Option<PadReelSequence>,
+}
+
+struct PadReelSequence {
+    output: Output,
+    workspace: WorkspaceId,
+    target: Option<Window>,
+    outward: f64,
+    x: f64,
+    y: f64,
+    active_x: bool,
+    active_y: bool,
+    // 0: undecided, 1: vertical scrolling, 2: horizontal window gesture.
+    axis: u8,
+    cancelled: bool,
+}
+
 
 impl State {
     fn conscia_pointer_allowed(&self) -> bool {
@@ -7,6 +29,67 @@ impl State {
             && !self.niri.screenshot_ui.is_open() && !self.niri.window_mru_ui.is_open()
             && !self.niri.seat.get_pointer().unwrap().is_grabbed()
             && !self.niri.seat.get_keyboard().unwrap().is_grabbed()
+    }
+
+    /// libinput reports two-finger motion through Finger axis events, not swipe events.
+    /// Preserve the initial target until both axes stop, even if the cursor moves.
+    pub(super) fn conscia_touchpad_reel(
+        &mut self, dx: Option<f64>, dy: Option<f64>, physical_x: f64,
+    ) -> bool {
+        let mut sequence = self.niri.conscia_pad_reel.sequence.take();
+        if sequence.is_none() {
+            if !self.conscia_pointer_allowed() || (dx.unwrap_or(0.) == 0. && dy.unwrap_or(0.) == 0.) {
+                return false;
+            }
+            let pos = self.niri.seat.get_pointer().unwrap().current_location();
+            if self.niri.contents_under(pos).layer.is_some() { return false; }
+            let Some((output, local)) = self.niri.output_under(pos) else { return false; };
+            let Some(mon) = self.niri.layout.monitor_for_output(output) else { return false; };
+            let ws = mon.active_workspace_ref();
+            let (target, reel, _, outward) = ws.scrolling().conscia_touch_target(local);
+            if !reel { return false; }
+            sequence = Some(PadReelSequence {
+                output: output.clone(), workspace: ws.id(), target, outward,
+                x: 0., y: 0., active_x: false, active_y: false, axis: 0, cancelled: false,
+            });
+        }
+        let mut gesture = sequence.unwrap();
+        if let Some(dx) = dx { gesture.active_x = dx != 0.; }
+        if let Some(dy) = dy { gesture.active_y = dy != 0.; }
+        gesture.x += physical_x;
+        gesture.y += dy.unwrap_or(0.);
+        let ended = !gesture.active_x && !gesture.active_y;
+        let valid = self.conscia_pointer_allowed()
+            && self.niri.layout.monitor_for_output(&gesture.output).is_some_and(|mon| {
+                let ws = mon.active_workspace_ref();
+                ws.id() == gesture.workspace && gesture.target.as_ref().is_none_or(|target|
+                    ws.scrolling().conscia_touch_matches(target, true))
+            });
+        gesture.cancelled |= !valid || !gesture.x.is_finite() || !gesture.y.is_finite();
+        if !gesture.cancelled {
+            let was_vertical = gesture.axis == 1;
+            if gesture.axis == 0 {
+                if gesture.y.abs() >= 10. && gesture.y.abs() > gesture.x.abs() * 1.5 {
+                    gesture.axis = 1;
+                } else if gesture.x.abs() >= 10. && gesture.x.abs() > gesture.y.abs() * 1.5 {
+                    gesture.axis = 2;
+                }
+            }
+            if gesture.axis == 1 {
+                let ws = self.niri.layout.monitor_for_output_mut(&gesture.output).unwrap().active_workspace();
+                ws.conscia_scroll(if was_vertical { dy.unwrap_or(0.) } else { gesture.y }, false);
+                self.niri.queue_redraw_all();
+            } else if ended && gesture.axis == 2 && gesture.x * gesture.outward >= 80.
+                && gesture.x.abs() > gesture.y.abs() * 2. {
+                if let Some(target) = &gesture.target {
+                    if let Some((_, mapped)) = self.niri.layout.windows().find(|(_, w)| &w.window == target) {
+                        mapped.toplevel().send_close();
+                    }
+                }
+            }
+        }
+        if !ended { self.niri.conscia_pad_reel.sequence = Some(gesture); }
+        true
     }
 
     pub(super) fn conscia_pointer_click(&mut self, left: bool, right: bool) -> bool {

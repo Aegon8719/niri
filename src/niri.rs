@@ -344,6 +344,9 @@ pub struct Niri {
     /// Scancodes of the keys to suppress.
     pub suppressed_keys: HashSet<Keycode>,
     pub super_tap: crate::input::super_tap::SuperTap,
+    pub conscia_touch: crate::input::conscia_touch::Controller,
+    pub conscia_pad_reel: crate::input::conscia::PadReel,
+    pub conscia_swipe_owned: bool,
     /// Button codes of the mouse buttons to suppress.
     pub suppressed_buttons: HashSet<u32>,
     pub bind_cooldown_timers: HashMap<Key, RegistrationToken>,
@@ -2703,6 +2706,9 @@ impl Niri {
             ext_data_control_state,
             popups: PopupManager::default(),
             popup_grab: None,
+            conscia_touch: Default::default(),
+            conscia_pad_reel: Default::default(),
+            conscia_swipe_owned: false,
             suppressed_keys: HashSet::new(),
             super_tap: Default::default(),
             suppressed_buttons: HashSet::new(),

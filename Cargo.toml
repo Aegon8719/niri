@@ -68,6 +68,8 @@ directories = "6.0.0"
 drm-ffi = "0.9.1"
 fastrand = "2.5.0"
 futures-util = { version = "0.3", default-features = false, features = ["std", "io"] }
+gdk-pixbuf = "0.21.5"
+gio = "0.21.5"
 git-version = "0.3.9"
 glam = "0.33"
 input = { version = "0.10.0", features = ["libinput_1_21"] }
