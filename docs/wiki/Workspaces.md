@@ -6,7 +6,7 @@ Each monitor contains an independent set of workspaces arranged vertically.
 You can switch between workspaces on a monitor with `focus-workspace-down` and `focus-workspace-up`.
 Empty workspaces "in the middle" automatically disappear when you switch away from them.
 
-There's always one empty workspace at the end (at the bottom) of every monitor.
+Each monitor retains at least two workspaces, including an empty workspace at the bottom.
 When you open a window on this empty workspace, a new empty workspace will immediately appear further below it.
 
 You can move workspaces up and down on the monitor with `move-workspace-up/down`.
@@ -47,14 +47,14 @@ You can refer to named workspaces by name, e.g. `focus-workspace "browser"`, and
 > This can work to some extent, but it can become somewhat confusing, since you can still move these workspaces up and down and between monitors.
 >
 > If you're coming from a static workspace WM, I suggest *not* doing that, but instead trying the "niri way" with dynamic workspaces, focusing and moving up/down instead of by index.
-> Thanks to scrollable tiling, you generally need fewer workspaces than on a traditional tiling WM.
+> Each workspace maintains its own Conscia window groups and split tree.
 
 ### Example workflow
 
 This is how I like to use workspaces.
 
 I will usually have my browser on the topmost workspace, then one workspace per project (or a "thing") I'm working on.
-On a single workspace I have 1–2 windows that fit inside a monitor that I switch between frequently, and maybe extra windows scrolled outside the view, usually either ones I need rarely, or temporary windows that I quickly close.
+On a single workspace I have 1–2 windows that fit inside a monitor that I switch between frequently, with additional window groups available in the thumbnail column.
 When I need another permanent window, I'll put it on a new workspace.
 
 I actively move workspaces up and down as I'm working on things to make what I need accessible in one motion.

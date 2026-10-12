@@ -865,6 +865,8 @@ window-rule {
 
 #### `geometry-corner-radius`
 
+Conscia 最大化保留普通窗口的圆角与焦点高亮；设置 `clip-to-geometry true` 可将客户端内容裁切到该圆角。
+
 <sup>Since: 0.1.6</sup>
 
 Set the corner radius of the window.

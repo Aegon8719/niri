@@ -1,103 +1,21 @@
-### Overview
+# 布局配置
 
-In the `layout {}` section you can change various settings that influence how windows are positioned and sized.
-
-Here are the contents of this section at a glance:
+Conscia 使用主区域、小窗列及持久化 Dwindle 分屏。窗口加入、缩略图、分屏组与最大化行为见[项目说明](../../README.md)。
 
 ```kdl
 layout {
     gaps 16
-    center-focused-column "never"
-    always-center-single-column
-    empty-workspace-above-first
-    default-column-display "tabbed"
-    background-color "#003300"
-
-    preset-column-widths {
-        proportion 0.33333
-        proportion 0.5
-        proportion 0.66667
-    }
-
-    default-column-width { proportion 0.5; }
-
-    preset-window-heights {
-        proportion 0.33333
-        proportion 0.5
-        proportion 0.66667
-    }
-
     focus-ring {
-        // off
-        on
         width 4
         active-color "#7fc8ff"
         inactive-color "#505050"
-        urgent-color "#9b0000"
-        // active-gradient from="#80c8ff" to="#bbddff" angle=45
-        // inactive-gradient from="#505050" to="#808080" angle=45 relative-to="workspace-view"
-        // urgent-gradient from="#800" to="#a33" angle=45
     }
-
-    border {
-        off
-        // on
-        width 4
-        active-color "#ffc87f"
-        inactive-color "#505050"
-        urgent-color "#9b0000"
-        // active-gradient from="#ffbb66" to="#ffc880" angle=45 relative-to="workspace-view"
-        // inactive-gradient from="#505050" to="#808080" angle=45 relative-to="workspace-view" in="srgb-linear"
-        // urgent-gradient from="#800" to="#a33" angle=45
-    }
-
-    shadow {
-        off
-        // on
-        softness 30
-        spread 5
-        offset x=0 y=5
-        draw-behind-window true
-        color "#00000070"
-        // inactive-color "#00000054"
-    }
-
-    tab-indicator {
-        // off
-        on
-        hide-when-single-tab
-        place-within-column
-        gap 5
-        width 4
-        length total-proportion=1.0
-        position "right"
-        gaps-between-tabs 2
-        corner-radius 8
-        active-color "red"
-        inactive-color "gray"
-        urgent-color "blue"
-        // active-gradient from="#80c8ff" to="#bbddff" angle=45
-        // inactive-gradient from="#505050" to="#808080" angle=45 relative-to="workspace-view"
-        // urgent-gradient from="#800" to="#a33" angle=45
-    }
-
-    insert-hint {
-        // off
-        on
-        color "#ffc87f80"
-        // gradient from="#ffbb6680" to="#ffc88080" angle=45 relative-to="workspace-view"
-    }
-
-    struts {
-        // left 64
-        // right 64
-        // top 64
-        // bottom 64
-    }
+    border { off; }
+    shadow { off; }
 }
 ```
 
-<sup>Since: 25.11</sup> You can override these settings for specific [outputs](./Configuration:-Outputs.md#layout-config-overrides) and [named workspaces](./Configuration:-Named-Workspaces.md#layout-config-overrides).
+配置可按输出或命名工作区覆盖。以下保留原有配置键名，描述其在当前布局中的作用。
 
 ### `gaps`
 
@@ -117,30 +35,11 @@ layout {
 
 ### `center-focused-column`
 
-When to center a column when changing focus.
-This can be set to:
-
-- `"never"`: no special centering, focusing an off-screen column will scroll it to the left or right edge of the screen. This is the default.
-- `"always"`, the focused column will always be centered.
-- `"on-overflow"`, focusing a column will center it if it doesn't fit on screen together with the previously focused column.
-
-```kdl
-layout {
-    center-focused-column "always"
-}
-```
+Conscia 的主区域位置由窗口队列及小窗列朝向决定，此兼容配置不触发平铺视图居中。
 
 ### `always-center-single-column`
 
-<sup>Since: 0.1.9</sup>
-
-If set, niri will always center a single column on a workspace, regardless of the `center-focused-column` option.
-
-```kdl
-layout {
-    always-center-single-column
-}
-```
+仅有一个窗口组时主区域自动填满可用工作区。该行为由 Conscia 布局决定。
 
 ### `empty-workspace-above-first`
 
@@ -156,100 +55,23 @@ layout {
 
 ### `default-column-display`
 
-<sup>Since: 25.02</sup>
-
-Sets the default display mode for new columns.
-Can be `normal` or `tabbed`.
-
-```kdl
-// Make all new columns tabbed by default.
-layout {
-    default-column-display "tabbed"
-
-    // You may also want to hide the tab indicator
-    // when there's only a single window in a column.
-    tab-indicator {
-        hide-when-single-tab
-    }
-}
-```
+Conscia 使用 Dwindle 分屏与小窗组，不绘制标签列。`toggle-column-tabbed-display` 动作用于释放主区域额外分屏。
 
 ### `preset-column-widths`
 
-Set the widths that the `switch-preset-column-width` action (Mod+R) toggles between.
-<sup>Since: 25.08</sup> You can use the `switch-preset-column-width-back` action (Mod+Shift+R) to toggle in reverse.
-
-`proportion` sets the width as a fraction of the output width, taking gaps into account.
-For example, you can perfectly fit four windows sized `proportion 0.25` on an output, regardless of the gaps setting.
-The default preset widths are <sup>1</sup>&frasl;<sub>3</sub>, <sup>1</sup>&frasl;<sub>2</sub> and <sup>2</sup>&frasl;<sub>3</sub> of the output.
-
-`fixed` sets the window width in logical pixels exactly.
-
-```kdl
-layout {
-    // Cycle between 1/3, 1/2, 2/3 of the output, and a fixed 1280 logical pixels.
-    preset-column-widths {
-        proportion 0.33333
-        proportion 0.5
-        proportion 0.66667
-        fixed 1280
-    }
-}
-```
+平铺尺寸由分割树决定。宽度增减动作调整最近分割比例；循环预设尺寸动作映射为小窗列翻转。
 
 ### `default-column-width`
 
-Set the default width of the new windows.
-
-The syntax is the same as in `preset-column-widths` above.
-
-```kdl
-layout {
-    // Open new windows sized 1/3 of the output.
-    default-column-width { proportion 0.33333; }
-}
-```
-
-You can also leave the brackets empty, then the windows themselves will decide their initial width.
-
-```kdl
-layout {
-    // New windows decide their initial width themselves.
-    default-column-width {}
-}
-```
-
-> [!NOTE]
-> `default-column-width {}` causes niri to send a (0, H) size in the initial configure request.
->
-> This is a bit [unclearly defined](https://gitlab.freedesktop.org/wayland/wayland-protocols/-/issues/155) in the Wayland protocol, so some clients may misinterpret it.
-> Either way, `default-column-width {}` is most useful for specific windows, in form of a [window rule](./Configuration:-Window-Rules.md#default-column-width) with the same syntax.
+普通新窗口进入主区域；初始平铺尺寸由主区域与分割树决定。浮动窗口仍可使用尺寸规则。
 
 ### `preset-window-heights`
 
-<sup>Since: 0.1.9</sup>
-
-Set the heights that the `switch-preset-window-height` action (Mod+Ctrl+Shift+R) toggles between.
-<sup>Since: 25.08</sup> You can use the `switch-preset-window-height-back` action (not bound by default) to toggle in reverse.
-
-`proportion` sets the height as a fraction of the output height, taking gaps into account.
-The default preset heights are <sup>1</sup>&frasl;<sub>3</sub>, <sup>1</sup>&frasl;<sub>2</sub> and <sup>2</sup>&frasl;<sub>3</sub> of the output.
-
-`fixed` sets the height in logical pixels exactly.
-
-```kdl
-layout {
-    // Cycle between 1/3, 1/2, 2/3 of the output, and a fixed 720 logical pixels.
-    preset-window-heights {
-        proportion 0.33333
-        proportion 0.5
-        proportion 0.66667
-        fixed 720
-    }
-}
-```
+平铺高度由分割树决定。高度增减动作调整最近的对应分割比例。
 
 ### `focus-ring` and `border`
+
+最大化窗口保留这些装饰，圆角与普通单应用布局一致；显式全屏隐藏装饰。
 
 Main ring and border are drawn around windows and indicate the active window.
 They are very similar and have the same options.
@@ -431,76 +253,11 @@ prefer-no-csd
 
 ### `tab-indicator`
 
-<sup>Since: 25.02</sup>
-
-Controls the appearance of the tab indicator that appears next to columns in tabbed display mode.
-
-Set `off` to hide the tab indicator.
-
-Set `hide-when-single-tab` to hide the indicator for tabbed columns that only have a single window.
-
-Set `place-within-column` to put the tab indicator "within" the column, rather than outside.
-This will include it in column sizing and avoid overlaying adjacent columns.
-
-`gap` sets the gap between the tab indicator and the window in logical pixels.
-The gap can be negative, this will put the tab indicator on top of the window.
-
-`width` sets the thickness of the indicator in logical pixels.
-
-`length` controls the length of the indicator.
-Set the `total-proportion` property to make tabs take up this much length relative to the window size.
-By default, the tab indicator has length equal to half of the window size, or `length total-proportion=0.5`.
-
-`position` sets the position of the tab indicator relative to the window.
-It can be `left`, `right`, `top`, or `bottom`.
-
-`gaps-between-tabs` controls the gap between individual tabs in logical pixels.
-
-`corner-radius` sets the rounded corner radius for tabs in the indicator in logical pixels.
-When `gaps-between-tabs` is zero, only the first and the last tabs have rounded corners, otherwise all tabs do.
-
-`active-color`, `inactive-color`, `urgent-color`, `active-gradient`, `inactive-gradient`, `urgent-gradient` let you override the colors for the tabs.
-They have the same semantics as the border and focus ring colors and gradients.
-
-Tab colors are picked in this order:
-
-1. Colors from the `tab-indicator` window rule, if set.
-1. Colors from the `tab-indicator` layout options, if set (you're here).
-1. If neither are set, niri picks the color matching the window border or focus ring, whichever one is active.
-
-```kdl
-// Make the tab indicator wider and match the window height,
-// also put it at the top and within the column.
-layout {
-    tab-indicator {
-        width 8
-        gap 8
-        length total-proportion=1.0
-        position "top"
-        place-within-column
-    }
-}
-```
+Conscia 的窗口组以分屏与缩略图表示，不绘制标签指示器。小窗组的应用图标按加入顺序排列。
 
 ### `insert-hint`
 
-<sup>Since: 0.1.10</sup> 
-
-Settings for the window insert position hint during an interactive window move.
-
-`off` disables the insert hint altogether.
-
-`color` and `gradient` let you change the color of the hint and have the same syntax as colors and gradients in border and focus ring.
-
-```kdl
-layout {
-    insert-hint {
-        // off
-        color "#ffc87f80"
-        gradient from="#ffbb6680" to="#ffc88080" angle=45 relative-to="workspace-view"
-    }
-}
-```
+分屏拖动使用半透明圆角预览；松手时提交分割树。整理方向和取消条件见[项目说明](../../README.md#dwindle-整理规则)。
 
 ### `struts`
 

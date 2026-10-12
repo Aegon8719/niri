@@ -1,15 +1,13 @@
-Welcome to the niri documentation!
+# Conscia 文档
 
-Feel free to look through usage and [Getting started](./Getting-Started.md).
-If you're looking for ways to configure niri, check out the [introduction to configuration](./Configuration:-Introduction.md).
+[项目说明](../../README.md)记录当前布局及全部默认 Touch、TouchPad、KeyBoard Shortcuts、Mouse Click 交互。
 
-If you'd like to help with niri, there are plenty of both coding- and non-coding-related ways to do so.
-See [CONTRIBUTING.md](https://github.com/niri-wm/niri/blob/main/CONTRIBUTING.md) for an overview.
+- [手势](./Gestures.md)
+- [最大化与全屏](./Fullscreen-and-Maximize.md)
+- [窗口组与分屏](./Tabs.md)
+- [工作区](./Workspaces.md)
+- [概览](./Overview.md)
+- [配置入口](./Configuration:-Introduction.md)
+- [构建与运行](../../README.md#配置构建与部署)
 
-If you're not already here, check out our new wiki website! https://niri-wm.github.io/niri/
-
----
-
-The documentation is open to contribution, see [Documenting niri](./Development:-Documenting-niri.md).
-Please discuss bigger changes in [our Matrix room](https://matrix.to/#/#niri:matrix.org) first!
-The wiki is generated from files in the `docs/wiki/` folder of the repository, so you can open a pull request modifying it there.
+通用输出、输入设备、窗口规则、IPC、截图和屏幕共享配置见对应页面。

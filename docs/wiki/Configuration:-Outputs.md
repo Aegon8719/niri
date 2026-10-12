@@ -303,31 +303,7 @@ output "HDMI-A-1" {
 
 ### `hot-corners`
 
-<sup>Since: 25.11</sup>
-
-Customize the hot corners for this output.
-By default, hot corners [in the gestures settings](./Configuration:-Gestures.md#hot-corners) are used for all outputs.
-
-Hot corners toggle the overview when you put your mouse at the very corner of a monitor.
-
-`off` will disable the hot corners on this output, and writing specific corners will enable only those hot corners on this output.
-
-```kdl
-// Enable the bottom-left and bottom-right hot corners on HDMI-A-1.
-output "HDMI-A-1" {
-    hot-corners {
-        bottom-left
-        bottom-right
-    }
-}
-
-// Disable the hot corners on DP-2.
-output "DP-2" {
-    hot-corners {
-        off
-    }
-}
-```
+Conscia 不通过屏幕热角激活概览。使用 `Mod+O` 或 DMS 工作区部件向内扫动。
 
 ### Layout config overrides
 

@@ -1,3 +1,5 @@
+本页介绍绑定语法。Conscia 的默认动作及布局映射以[当前快捷键表](../../README.md#keyboard-shortcuts--键盘快捷键)为准：`maximize-window-to-edges` 对应单应用最大化，`maximize-column` 对应整个分屏组展开，`toggle-show-desktop` 显示／恢复桌面。
+
 ### Overview
 
 Key bindings are declared in the `binds {}` section of the config.

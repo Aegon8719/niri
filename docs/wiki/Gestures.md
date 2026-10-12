@@ -1,125 +1,26 @@
-### Overview
+# Conscia 手势
 
-There are several gestures in niri.
+所有方向均以主区域与小窗列的交界为内侧，以屏幕外缘为外侧。小窗列翻转后方向随之翻转。
 
-Also see the [gestures configuration](./Configuration:-Gestures.md) wiki page.
+| 输入 | 操作 | 行为 |
+| --- | --- | --- |
+| 触屏 | 点击小窗 | 将对应窗口组提升到主区域 |
+| 触屏 | 小窗列单指纵向滑动 | 连续滚动，结束后吸附到最近完整窗口 |
+| 触屏 | 小窗单指向内／向外滑动 | 加入主区域分屏／关闭起点应用 |
+| 触屏 | 分屏标题栏快速向内滑动 | 将对应应用还原到小窗列 |
+| 触屏 | 主区域标题栏快速向外滑动 | 关闭起点应用 |
+| 触屏 | 标题栏停留后拖动 | 整理分屏位置 |
+| 触屏 | 主区域三指张开／捏合 | 整个分屏组展开／恢复，保留组内分割 |
+| 触控板 | 小窗列二指纵向滚动 | 连续滚动，结束后吸附 |
+| 触控板 | 小窗二指向外滑动 | 关闭起点应用 |
+| 触控板 | 三指张开／捏合 | 整个分屏组展开／恢复 |
+| 触屏／触控板 | 三指上下滑动 | 切换工作区 |
+| 触屏／触控板 | 四指捏合／张开 | 显示桌面／恢复所有窗口 |
+| 鼠标／触控板按钮 | 小窗左键／右键 | 提升组／关闭对应应用 |
+| 鼠标／触控板按钮 | 小窗 Super+左键 | 将组加入分屏 |
+| 鼠标 | 标题栏拖动／分割线拖动 | 整理位置／调整比例 |
+| 鼠标 | DMS 空白区域纵向滚轮 | 切换上下工作区 |
 
-### Mouse
+三指横向滑动和四指上下滑动不执行桌面动作。工作区概览由 `Mod+O` 或 DMS 工作区部件向内扫动打开。单个分屏应用最大化使用 `Mod+F` 或 `Mod+M`，没有独立触摸手势。
 
-#### Interactive Move
-
-<sup>Since: 0.1.10</sup>
-
-You can move windows by holding <kbd>Mod</kbd> and the left mouse button.
-
-You can customize the look of the window insertion preview in the [`insert-hint` layout config](./Configuration:-Layout.md#insert-hint).
-
-<sup>Since: 25.01</sup> Right click while moving to toggle between floating and tiling layout to put the window into.
-
-#### Interactive Resize
-
-<sup>Since: 0.1.6</sup>
-
-You can resize windows by holding <kbd>Mod</kbd> and the right mouse button.
-
-#### Reset Window Height
-
-<sup>Since: 0.1.6</sup>
-
-If you double-click on a top or bottom tiled window resize edge, the window height will reset to automatic.
-
-This works with both window-initiated resizes (when using client-side decorations), and niri-initiated <kbd>Mod</kbd> + right click resizes.
-
-#### Toggle Full Width
-
-<sup>Since: 0.1.6</sup>
-
-If you double-click on a left or right tiled window resize edge, the column will expand to the full workspace width.
-
-This works with both window-initiated resizes (when using client-side decorations), and niri-initiated <kbd>Mod</kbd> + right click resizes.
-
-#### Horizontal View Movement
-
-<sup>Since: 0.1.6</sup>
-
-Move the view horizontally by holding <kbd>Mod</kbd> and the middle mouse button (or the wheel) and dragging the mouse horizontally.
-
-#### Workspace Switch
-
-<sup>Since: 0.1.7</sup>
-
-Switch workspaces by holding <kbd>Mod</kbd> and the middle mouse button (or the wheel) and dragging the mouse vertically.
-
-### Touchpad
-
-#### Workspace Switch
-
-Switch workspaces with three-finger vertical swipes.
-
-#### Horizontal View Movement
-
-Move the view horizontally with three-finger horizontal swipes.
-
-#### Open and Close the Overview
-
-<sup>Since: 25.05</sup>
-
-Open and close the overview with a four-finger vertical swipe.
-
-### Touchscreen
-
-#### Interactive Move
-
-<sup>Since: 0.1.10</sup>
-
-You can move windows by holding <kbd>Mod</kbd> and dragging the window with your finger.
-
-Dragging a tiled window horizontally will scroll the view instead.
-
-You can customize the look of the window insertion preview in the [`insert-hint` layout config](./Configuration:-Layout.md#insert-hint).
-
-<sup>Since: 25.11</sup> Tap with a second finger while moving to toggle between floating and tiling layout to put the window into.
-
-### Tablet
-
-#### Interactive Move
-
-<sup>Since: next release</sup>
-
-You can move windows by holding <kbd>Mod</kbd> and dragging the window with a tablet pen.
-
-Dragging a tiled window horizontally will scroll the view instead.
-
-You can customize the look of the window insertion preview in the [`insert-hint` layout config](./Configuration:-Layout.md#insert-hint).
-
-### All Pointing Devices
-
-#### Drag-and-Drop Edge View Scroll
-
-<sup>Since: 25.02</sup>
-
-Scroll the tiling view when moving the mouse cursor against a monitor edge during drag-and-drop (DnD).
-Also works on a touchscreen.
-
-#### Drag-and-Drop Edge Workspace Switch
-
-<sup>Since: 25.05</sup>
-
-Scroll the workspaces up/down when moving the mouse cursor against a monitor edge during drag-and-drop (DnD) while in the overview.
-Also works on a touchscreen.
-
-#### Drag-and-Drop Hold to Activate
-
-<sup>Since: 25.05</sup>
-
-While drag-and-dropping, hold your mouse over a window to activate it.
-This will bring a floating window to the top for example.
-
-In the overview, you can also hold the mouse over a workspace to switch to it.
-
-#### Hot Corner to Toggle the Overview
-
-<sup>Since: 25.05</sup>
-
-Put your mouse at the very top-left corner of a monitor to toggle the overview.
-Also works during drag-and-dropping something.
+手势阈值、仲裁、截图与概览操作详见[项目说明](../../README.md#交互约定)。

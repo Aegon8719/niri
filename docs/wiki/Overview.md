@@ -1,116 +1,18 @@
-### Overview
+# 工作区概览
 
-<sup>Since: 25.05</sup>
+使用 `Mod+O` 打开或关闭概览，也可从 DMS 工作区部件向屏幕内侧扫动打开。点击窗口或工作区选择目标并退出；Esc 或 Return 关闭概览。
 
-The Overview is a zoomed-out view of your workspaces and windows.
-It lets you see what's going on at a glance, navigate, and drag windows around.
+概览中纵向滚动浏览工作区，横向兼容滚动接口浏览小窗列。窗口拖动使用窗口移动路径，平铺应用仍遵循分屏整理规则。四指上下滑动和屏幕热角不打开概览。
 
-<video controls src="https://github.com/user-attachments/assets/379a5d1f-acdb-4c11-b36c-e85fd91f0995">
-
-https://github.com/user-attachments/assets/379a5d1f-acdb-4c11-b36c-e85fd91f0995
-
-</video>
-
-Open it with the `toggle-overview` bind, via the top-left hot corner, or using a touchpad four-finger swipe up.
-While in the overview, all keyboard shortcuts keep working, while pointing devices get easier:
-
-- Mouse: left click and drag windows to move them, right click and drag to scroll workspaces left/right, scroll to switch workspaces (no holding Mod required).
-- Touchpad: two-finger scrolling that matches the normal three-finger gestures.
-- Touchscreen: one-finger scrolling, or one-finger long press to move a window.
-
-> [!TIP]
-> The overview needs to draw a background under every workspace.
-> So, layer-shell surfaces work this way: the *background* and *bottom* layers zoom out together with the workspaces, while the *top* and *overlay* layers remain on top of the overview.
->
-> Put your bar on the *top* layer.
-
-Drag-and-drop will scroll the workspaces up/down in the overview, and will activate a workspace when holding it for a moment.
-Combined with the hot corner, this lets you do a mouse-only DnD across workspaces.
-
-<video controls src="https://github.com/user-attachments/assets/5f09c5b7-ff40-462b-8b9c-f1b8073a2cbb">
-
-https://github.com/user-attachments/assets/5f09c5b7-ff40-462b-8b9c-f1b8073a2cbb
-
-</video>
-
-You can also drag-and-drop a window to a new workspace above, below, or between existing workspaces.
-
-<video controls src="https://github.com/user-attachments/assets/b76d5349-aa20-4889-ab90-0a51554c789d">
-
-https://github.com/user-attachments/assets/b76d5349-aa20-4889-ab90-0a51554c789d
-
-</video>
-
-### Configuration
-
-See the full documentation for the `overview {}` section [here](./Configuration:-Miscellaneous.md#overview).
-
-You can set the zoom-out level like this:
+背景与底层 layer-shell 表面随工作区显示，顶部及覆盖层表面保持在概览上方。
 
 ```kdl
-// Make workspaces four times smaller than normal in the overview.
 overview {
     zoom 0.25
 }
-```
-
-To change the color behind the workspaces, use the `backdrop-color` setting:
-
-```kdl
-// Make the backdrop light.
-overview {
-    backdrop-color "#777777"
-}
-```
-
-You can also disable the hot corner:
-
-```kdl
-// Disable the hot corners.
-gestures {
-    hot-corners {
-        off
-    }
-}
-```
-
-### Backdrop customization
-
-Apart from setting a custom backdrop color like described above, you can also put a layer-shell wallpaper into the backdrop with a [layer rule](./Configuration:-Layer-Rules.md#place-within-backdrop), for example:
-
-```kdl
-// Put swaybg inside the overview backdrop.
-layer-rule {
-    match namespace="^wallpaper$"
-    place-within-backdrop true
-}
-```
-
-This will only work for *background* layer surfaces that ignore exclusive zones (typical for wallpaper tools).
-
-You can run two different wallpaper tools (like swaybg and awww), one for the backdrop and one for the normal workspace background.
-This way you could set the backdrop one to a blurred version of the wallpaper for a nice effect.
-
-You can also combine this with a transparent background color if you don't like the wallpaper moving together with workspaces:
-
-```kdl
-// Make the wallpaper stationary, rather than moving with workspaces.
-layer-rule {
-    // This is for swaybg; change for other wallpaper tools.
-    // Find the right namespace by running niri msg layers.
-    match namespace="^wallpaper$"
-    place-within-backdrop true
-}
-
-// Set transparent workspace background color.
 layout {
-    background-color "transparent"
-}
-
-// Optionally, disable the workspace shadows in the overview.
-overview {
-    workspace-shadow {
-        off
-    }
+    background-color "#222222"
 }
 ```
+
+缩放、背景和工作区阴影参数见[概览配置](./Configuration:-Overview.md)。
