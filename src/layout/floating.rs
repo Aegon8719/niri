@@ -628,7 +628,9 @@ impl<W: LayoutElement> FloatingSpace<W> {
             renderer, snapshot, scale, tile_size, tile_pos, blocker, anim,
         );
         match res {
-            Ok(closing) => {
+            Ok(mut closing) => {
+                let left = tile_pos.x + tile_size.w / 2. < self.view_size.w / 2.;
+                closing.set_fly_out(1., if left { -tile_pos.x - tile_size.w } else { self.view_size.w - tile_pos.x });
                 self.closing_windows.push(closing);
             }
             Err(err) => {

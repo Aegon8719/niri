@@ -929,6 +929,8 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         session_id: u64,
     },
+    /// Hide or restore application windows on all outputs.
+    ToggleShowDesktop {},
     /// Toggle (open/close) the Overview.
     ToggleOverview {},
     /// Open the Overview.

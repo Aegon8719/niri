@@ -272,7 +272,7 @@ impl Workspace {
     }
     pub fn set_offset(&mut self, offset: f64, slots: usize) {
         if offset.is_finite() {
-            self.reel_offset = offset.round().clamp(0., self.max_offset(slots));
+            self.reel_offset = offset.clamp(0., self.max_offset(slots));
         }
     }
     pub fn scroll(&mut self, delta: f64, slots: usize) {
@@ -311,11 +311,12 @@ impl Workspace {
         else if !members.is_empty() { self.reel_groups.insert(anchor, members.to_vec()); }
         if !ratios.is_empty() { self.split_ratios.insert(anchor, ratios.to_vec()); }
         if activate {
-            // Incoming windows always take the right-hand focus area. Reset
-            // scrolling so the outgoing focus group is first in the left reel.
+            // New windows replace the focus group without flipping the layout.
+            // Keep the outgoing group at the front of the current reel.
+            let side = self.side;
             self.reel_offset = 0.;
             if !empty { self.promote(self.windows.len() - 1); }
-            self.side = ReelSide::Left;
+            self.side = side;
         }
         if activate || empty { self.active_main = Some(anchor); }
         self.clamp_offset(slots);

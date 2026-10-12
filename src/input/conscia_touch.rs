@@ -60,13 +60,18 @@ fn horizontal(delta: Point<f64, Logical>) -> bool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum MultiAction { Up, Down, Expand, Restore, OverviewOpen, OverviewClose }
+enum MultiAction { Up, Down, Expand, Restore, DesktopShow, DesktopRestore }
 
 fn multi_action(fingers: &[Finger], peak: usize, main: bool) -> Option<MultiAction> {
     if fingers.len() != peak { return None; }
     let delta = centroid(fingers, false) - centroid(fingers, true);
-    if peak == 4 && delta.y.abs() >= SWIPE && delta.y.abs() > delta.x.abs() * 2. {
-        return Some(if delta.y < 0. { MultiAction::OverviewOpen } else { MultiAction::OverviewClose });
+    if peak == 4 {
+        let before = spread(fingers, true);
+        let after = spread(fingers, false);
+        if before >= 20. && (after - before).abs() >= 30. {
+            if after / before <= 0.75 { return Some(MultiAction::DesktopShow); }
+            if after / before >= 1.25 { return Some(MultiAction::DesktopRestore); }
+        }
     }
     if peak == 3 && main {
         let before = spread(fingers, true);
@@ -107,7 +112,10 @@ impl State {
 
     fn conscia_touch_abort_drag(&mut self, s: &Session) {
         for ws in self.niri.layout.workspaces_mut() {
-            if ws.id() == s.workspace { ws.scrolling_mut().conscia_drag_end(true); }
+            if ws.id() == s.workspace {
+                ws.scrolling_mut().conscia_drag_end(true);
+                ws.scrolling_mut().conscia_scroll_gesture(false);
+            }
         }
     }
 
@@ -132,11 +140,12 @@ impl State {
         let handle = self.niri.seat.get_touch().unwrap();
         if !self.conscia_touch_allowed() || handle.is_grabbed() { return false; }
         let under = self.niri.contents_under(pos);
-        if under.layer.is_some() { return false; }
+        let shell_or_desktop = under.layer.is_some() || self.niri.conscia_desktop;
         let Some((output, local)) = self.niri.output_under(pos) else { return false; };
         let Some(mon) = self.niri.layout.monitor_for_output(output) else { return false; };
         let ws = mon.active_workspace_ref();
-        let (target, reel, title, outward) = ws.scrolling().conscia_touch_target(local);
+        let (target, reel, title, outward) = if shell_or_desktop { (None, false, false, 0.) }
+            else { ws.scrolling().conscia_touch_target(local) };
         let overview = self.niri.layout.is_overview_open();
         let owned = !overview && (reel || title);
         let deferred = (title && !overview).then(|| (under.surface, DownEvent {
@@ -146,7 +155,7 @@ impl State {
             output: output.clone(), workspace: ws.id(), origin: pos - local,
             fingers: vec![Finger { slot, start: pos, down: pos, pos }], peak: 1,
             started: time.micros(), target, reel, title,
-            main: !overview && ws.scrolling().conscia_touch_main_at(local), overview, outward,
+            main: !shell_or_desktop && !overview && ws.scrolling().conscia_touch_main_at(local), overview, outward,
             owned, finished: false, scrolling: false, dragging: false, swiping: false, moved: false, deferred,
         });
         self.niri.pointer_visibility = PointerVisibility::Disabled;
@@ -170,6 +179,7 @@ impl State {
             if s.reel {
                 if !s.scrolling && delta.y.abs() >= SLOP && delta.y.abs() > delta.x.abs() * 1.5 {
                     s.scrolling = true;
+                    ws.scrolling_mut().conscia_scroll_gesture(true);
                     ws.conscia_scroll(-delta.y, false);
                 } else if s.scrolling { ws.conscia_scroll(last.y - pos.y, false); }
             } else if s.title {
@@ -207,10 +217,11 @@ impl State {
                 Some(MultiAction::Down) => mon.switch_workspace_down(),
                 Some(MultiAction::Expand) => mon.active_workspace().scrolling_mut().conscia_touch_expand(true),
                 Some(MultiAction::Restore) => mon.active_workspace().scrolling_mut().conscia_touch_expand(false),
-                Some(MultiAction::OverviewOpen | MultiAction::OverviewClose) | None => (),
+                Some(MultiAction::DesktopShow | MultiAction::DesktopRestore) | None => (),
             }
             if s.peak == 1 && s.owned {
                 let ws = mon.active_workspace();
+                if s.scrolling { ws.scrolling_mut().conscia_scroll_gesture(false); }
                 if s.dragging { ws.scrolling_mut().conscia_drag_end(false); }
                 else if !s.scrolling && horizontal(delta) && (s.reel || s.swiping || time.micros().saturating_sub(s.started) < HOLD_US) {
                     if let Some(target) = &s.target {
@@ -235,8 +246,8 @@ impl State {
                 }
             }
             match action {
-                Some(MultiAction::OverviewOpen) => { self.niri.layout.open_overview(); }
-                Some(MultiAction::OverviewClose) => { self.niri.layout.close_overview(); }
+                Some(MultiAction::DesktopShow) => self.conscia_show_desktop(true),
+                Some(MultiAction::DesktopRestore) => self.conscia_show_desktop(false),
                 _ => (),
             }
             if s.owned {

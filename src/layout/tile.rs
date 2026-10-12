@@ -286,7 +286,7 @@ impl<W: LayoutElement> Tile<W> {
                 if prev_sizing_mode.is_fullscreen() {
                     tile_size.w = f64::max(tile_size.w, self.view_size.w);
                     tile_size.h = f64::max(tile_size.h, self.view_size.h);
-                } else if prev_sizing_mode.is_normal() && !self.border.is_off() {
+                } else if !prev_sizing_mode.is_fullscreen() && !self.border.is_off() {
                     let width = self.border.width();
                     tile_size.w += width * 2.;
                     tile_size.h += width * 2.;
@@ -307,7 +307,7 @@ impl<W: LayoutElement> Tile<W> {
                 let expanded_from = resize
                     .expanded_progress
                     .map(|anim| anim.clamped_value().clamp(0., 1.))
-                    .unwrap_or(if prev_sizing_mode.is_normal() { 0. } else { 1. });
+                    .unwrap_or(if !prev_sizing_mode.is_fullscreen() { 0. } else { 1. });
 
                 // Also try to reuse the existing offscreen buffer if we have one.
                 (
@@ -325,7 +325,7 @@ impl<W: LayoutElement> Tile<W> {
                 if prev_sizing_mode.is_fullscreen() {
                     tile_size.w = f64::max(tile_size.w, self.view_size.w);
                     tile_size.h = f64::max(tile_size.h, self.view_size.h);
-                } else if prev_sizing_mode.is_normal() && !self.border.is_off() {
+                } else if !prev_sizing_mode.is_fullscreen() && !self.border.is_off() {
                     let width = self.border.width();
                     tile_size.w += width * 2.;
                     tile_size.h += width * 2.;
@@ -337,7 +337,7 @@ impl<W: LayoutElement> Tile<W> {
                     0.
                 };
 
-                let expanded_from = if prev_sizing_mode.is_normal() { 0. } else { 1. };
+                let expanded_from = if !prev_sizing_mode.is_fullscreen() { 0. } else { 1. };
 
                 (
                     size,
@@ -368,7 +368,7 @@ impl<W: LayoutElement> Tile<W> {
                 } else {
                     0.
                 };
-                let expanded_to = if self.sizing_mode.is_normal() { 0. } else { 1. };
+                let expanded_to = if !self.sizing_mode.is_fullscreen() { 0. } else { 1. };
                 let fullscreen_progress = (fullscreen_from != fullscreen_to)
                     .then(|| anim.restarted(fullscreen_from, fullscreen_to, 0.));
                 let expanded_progress = (expanded_from != expanded_to)
@@ -745,7 +745,7 @@ impl<W: LayoutElement> Tile<W> {
             }
         }
 
-        if self.sizing_mode.is_normal() {
+        if !self.sizing_mode.is_fullscreen() {
             0.
         } else {
             1.
@@ -754,7 +754,7 @@ impl<W: LayoutElement> Tile<W> {
 
     /// Returns `None` if the border is hidden and `Some(width)` if it should be shown.
     pub fn effective_border_width(&self) -> Option<f64> {
-        if !self.sizing_mode.is_normal() {
+        if self.sizing_mode.is_fullscreen() {
             return None;
         }
 
@@ -1003,12 +1003,17 @@ impl<W: LayoutElement> Tile<W> {
 
     pub fn request_maximized(
         &mut self,
-        size: Size<f64, Logical>,
+        mut size: Size<f64, Logical>,
         animate: bool,
         transaction: Option<Transaction>,
     ) {
+        if !self.border.is_off() {
+            let width = self.border.width();
+            size.w = (size.w - width * 2.).max(1.);
+            size.h = (size.h - width * 2.).max(1.);
+        }
         self.window.request_size(
-            size.to_i32_round(),
+            size.to_i32_floor(),
             SizingMode::Maximized,
             animate,
             transaction,

@@ -351,6 +351,7 @@ window-rule {
 }
 
 binds {
+    Super+D repeat=false hotkey-overlay-title="显示／恢复桌面" { toggle-show-desktop; }
     // 单独短按两次 Super 打开应用启动器，由输入层识别。
 
     // 启动与帮助
@@ -359,7 +360,7 @@ binds {
 
     // 主区域与小窗列
     Mod+Tab hotkey-overlay-title="将小窗列前端窗口组提升到主区域" { focus-column-right; }
-    Mod+F hotkey-overlay-title="最大化主窗口" { maximize-column; }
+    Mod+F hotkey-overlay-title="最大化当前应用" { maximize-window-to-edges; }
     Mod+BackSpace hotkey-overlay-title="将主区域的额外窗口全部移入小窗列" { toggle-column-tabbed-display; }
     Mod+Q repeat=false hotkey-overlay-title="关闭当前窗口" { close-window; }
 
@@ -472,7 +473,7 @@ binds {
     Mod+Ctrl+R hotkey-overlay-title=null { reset-window-height; }
     Mod+Shift+F hotkey-overlay-title=null { fullscreen-window; }
     Mod+M hotkey-overlay-title=null { maximize-window-to-edges; }
-    Mod+Ctrl+F hotkey-overlay-title=null { expand-column-to-available-width; }
+    Mod+Ctrl+F hotkey-overlay-title="展开或恢复整个分屏组" { maximize-column; }
     Mod+C hotkey-overlay-title=null { center-column; }
     Mod+Ctrl+C hotkey-overlay-title=null { center-visible-columns; }
     Mod+Minus hotkey-overlay-title=null { set-column-width "-10%"; }

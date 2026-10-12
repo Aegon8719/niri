@@ -36,7 +36,7 @@ pub fn scene(layout: &LayoutSnapshot, offset: f64) -> Vec<SceneItem> {
                 reel_index += 1;
                 let pos = index as f64 - offset;
                 item.y = layout.reel.y as f64 + layout.origin_offset.1 + pos * item.height;
-                let visible = pos >= 0. && pos + 1. <= layout.slot_count as f64;
+                let visible = pos + 1. > 0. && pos < layout.slot_count as f64;
                 item.opacity = if visible { 1. } else { 0. };
                 item.role = if visible {
                     WindowRole::Reel { index }

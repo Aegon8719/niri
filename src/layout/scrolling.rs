@@ -412,21 +412,34 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                     * (std::f64::consts::PI * progress).sin().powi(2);
             }
         }
-        if self.conscia.last_scroll.is_some_and(|last| now.saturating_sub(last) > Duration::from_millis(140)) {
-            self.conscia.end_scroll();
+        if !self.conscia.scroll_active && self.conscia.last_scroll.is_some_and(|last| now.saturating_sub(last) > Duration::from_millis(140)) {
+            self.conscia_scroll_finish();
         }
+        if let Some((start, from, to)) = self.conscia.reel_snap {
+            let t = (now.saturating_sub(start).as_secs_f64() / 0.18).min(1.);
+            let t = t * t * (3. - 2. * t);
+            self.conscia.model.set_offset(from + (to - from) * t, self.conscia.slots());
+            if t >= 1. { self.conscia.reel_snap = None; }
+        }
+        self.closing_windows.retain_mut(|closing| {
+            closing.advance_animations();
+            closing.are_animations_ongoing()
+        });
         for tile in self.tiles_mut() { tile.advance_animations(); }
     }
 
     pub fn are_animations_ongoing(&self) -> bool {
         self.conscia.transition.is_some() || self.conscia.reel_bounce.is_some()
             || self.conscia.snap_hint_animating()
+            || !self.closing_windows.is_empty()
+            || self.conscia.reel_snap.is_some()
+            || (!self.conscia.scroll_active && self.conscia.last_scroll.is_some())
             || self.reel_icons.is_loading()
             || self.tiles().any(Tile::are_animations_ongoing)
     }
 
     pub fn are_transitions_ongoing(&self) -> bool {
-        self.conscia.transition.is_some()
+        !self.closing_windows.is_empty() || self.conscia.transition.is_some()
     }
 
     pub fn update_render_elements(&mut self, is_active: bool, layer: RenderLayer) {
@@ -843,19 +856,22 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         }
         self.conscia_changed(from, owner.is_none() && activate);
         if let Some((_, transition)) = &mut self.conscia.transition {
-            let right_edge = self.working_area.loc.x + self.working_area.size.w;
-            let incoming_left = transition.to.iter()
-                .filter(|item| ids.contains(&item.window))
-                .map(|item| item.x)
-                .reduce(f64::min);
-            if let Some(left) = incoming_left {
-                // Give newly added windows an off-screen starting position,
-                // while the previous focus group moves and shrinks into the
-                // left reel using the same 220ms transition.
+            let incoming = transition.to.iter().filter(|item| ids.contains(&item.window));
+            let offset = match self.conscia.model.side {
+                conscia::core::ReelSide::Left => incoming.map(|item| item.x)
+                    .reduce(f64::min)
+                    .map(|left| self.working_area.loc.x + self.working_area.size.w - left),
+                conscia::core::ReelSide::Right => incoming.map(|item| item.x + item.width)
+                    .reduce(f64::max)
+                    .map(|right| self.working_area.loc.x - right),
+            };
+            if let Some(offset) = offset {
+                // Enter from the focus area's outer edge while the previous
+                // group moves into the reel on the opposite side.
                 for item in &transition.to {
                     if !ids.contains(&item.window) { continue; }
                     let mut start = item.clone();
-                    start.x += right_edge - left;
+                    start.x += offset;
                     transition.from.push(start);
                 }
             }
@@ -991,7 +1007,29 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         window: &W::Id,
         blocker: TransactionBlocker,
     ) {
-        let _ = (renderer, window, blocker);
+        if self.options.animations.off { return; }
+        let Some(id) = self.conscia.id(window) else { return; };
+        let Some(item) = self.conscia.current_scene().into_iter().find(|p| p.window == id && p.opacity > 0.) else { return; };
+        let Some(tile) = self.tiles_mut().find(|t| t.window().id() == window) else { return; };
+        let Some(snapshot) = tile.take_unmap_snapshot() else { return; };
+        let size = tile.tile_size();
+        if size.w <= 0. || size.h <= 0. { return; }
+        let factor = (item.width / size.w).min(item.height / size.h);
+        let pos = Point::from((item.x + (item.width - size.w * factor) / 2.,
+            item.y + (item.height - size.h * factor) / 2.));
+        let reel_left = self.conscia.model.side == conscia::core::ReelSide::Left;
+        let outward_left = if self.conscia.model.in_main(id) { !reel_left } else { reel_left };
+        let distance = if outward_left { -pos.x - size.w * factor - self.working_area.loc.x.abs() }
+            else { self.view_size.w - pos.x };
+        let anim = Animation::new(self.clock.clone(), 0., 1., 0., self.options.animations.window_close.anim);
+        let blocker = if self.options.disable_transactions { TransactionBlocker::completed() } else { blocker };
+        match ClosingWindow::new(renderer, snapshot, Scale::from(self.scale), size, pos, blocker, anim) {
+            Ok(mut closing) => {
+                closing.set_fly_out(factor, distance);
+                self.closing_windows.push(closing);
+            }
+            Err(err) => warn!("error creating a closing window animation: {err:?}"),
+        }
     }
 
     fn start_close_animation_for_tile(
@@ -1375,6 +1413,8 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
     pub fn toggle_full_width(&mut self) {
         if !self.conscia_can_edit() || self.conscia.model.main().is_none() { return; }
+        if !self.conscia.main_maximized && self.conscia.model.windows().len() == 1
+            && self.conscia.model.main_tiles().is_empty() { return; }
         let from = self.conscia.current_scene();
         self.conscia.main_maximized = !self.conscia.main_maximized;
         self.conscia_changed(from, true);
@@ -1432,10 +1472,81 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             RelocateRenderElement, RescaleRenderElement};
         if !layer.is_normal() { return; }
         let scale = Scale::from(self.scale);
+        for closing in self.closing_windows.iter().rev() {
+            push(closing.render(ctx.as_gles(), Rectangle::new(Point::from((0., 0.)), self.view_size), scale).into());
+        }
         let mut scene = self.conscia.current_scene();
+        let reel_clip = self.conscia.layout.as_ref().map(|layout| Rectangle::new(
+            Point::from((layout.reel.x as f64 + layout.origin_offset.0, layout.reel.y as f64 + layout.origin_offset.1)),
+            Size::from((layout.reel.width as f64, layout.reel.height as f64)),
+        ).to_physical_precise_round(scale));
         let active = self.conscia.active();
         scene.sort_by_key(|p| (self.conscia.dialogs.iter().all(|(id, _)| *id != p.window),
             Some(p.window) != active, p.role != conscia::geometry::WindowRole::Main));
+        // Render one foreground row per reel group. Membership order records
+        // join order independently of the split tree's spatial arrangement.
+        for &anchor in self.conscia.model.windows() {
+            if self.conscia.model.in_main(anchor) { continue; }
+            let members = std::iter::once(anchor)
+                .chain(self.conscia.model.reel_group(anchor).iter().copied());
+            let mut icons = Vec::new();
+            let mut bounds: Option<Rectangle<f64, Logical>> = None;
+            for id in members {
+                let Some(p) = scene.iter().find(|p| p.window == id
+                    && matches!(p.role, conscia::geometry::WindowRole::Reel { .. })
+                    && p.opacity > 0. && p.width > 0. && p.height > 0.) else { continue; };
+                let Some(tile) = self.tiles().find(|t| self.conscia.id(t.window().id()) == Some(id)) else { continue; };
+                let size = tile.tile_size();
+                if size.w <= 0. || size.h <= 0. { continue; }
+                let factor = (p.width / size.w).min(p.height / size.h);
+                let width = size.w * factor;
+                let height = size.h * factor;
+                let rect = Rectangle::new(
+                    Point::from((p.x + (p.width - width) / 2., p.y + (p.height - height) / 2.)),
+                    Size::from((width, height)),
+                );
+                bounds = Some(match bounds {
+                    None => rect,
+                    Some(previous) => {
+                        let left = previous.loc.x.min(rect.loc.x);
+                        let top = previous.loc.y.min(rect.loc.y);
+                        let right = (previous.loc.x + previous.size.w).max(rect.loc.x + rect.size.w);
+                        let bottom = (previous.loc.y + previous.size.h).max(rect.loc.y + rect.size.h);
+                        Rectangle::new((left, top).into(), (right - left, bottom - top).into())
+                    }
+                });
+                icons.push((tile.window().app_id(), p.opacity));
+            }
+            let Some(bounds) = bounds else { continue; };
+            let icon_size = crate::render_helpers::app_icon::ICON_SIZE;
+            let extent = f64::from(icon_size);
+            let margin = 8.;
+            if bounds.size.w < margin + extent || bounds.size.h < margin + extent { continue; }
+            let row_width = icons.len() as f64 * (extent + margin) - margin;
+            let x = if self.conscia.model.side == conscia::core::ReelSide::Left {
+                bounds.loc.x + bounds.size.w - margin - row_width
+            } else { bounds.loc.x + margin };
+            let y = bounds.loc.y + bounds.size.h - margin - extent;
+            let Some(crop) = bounds.to_physical_precise_round(scale)
+                .intersection(self.working_area.to_physical_precise_round(scale)) else { continue; };
+            let crop = if self.conscia.transition.is_none() {
+                let Some(crop) = reel_clip.and_then(|reel| crop.intersection(reel)) else { continue; };
+                crop
+            } else { crop };
+            for (index, (app_id, opacity)) in icons.into_iter().enumerate() {
+                let location = Point::<f64, Logical>::from((x + index as f64 * (extent + margin), y));
+                let buffer = self.reel_icons.get(app_id.as_deref(), self.scale);
+                if let Ok(element) = smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement::from_buffer(
+                    ctx.renderer, location.to_physical_precise_round::<_, i32>(scale).to_f64(),
+                    &buffer, Some(opacity), None, Some(Size::from((icon_size, icon_size))),
+                    smithay::backend::renderer::element::Kind::Unspecified,
+                ) {
+                    if let Some(element) = CropRenderElement::from_element(element, scale, crop) {
+                        push(ScrollingSpaceRenderElement::ReelIcon(element));
+                    }
+                }
+            }
+        }
         for p in scene {
             if p.opacity <= 0. || p.width <= 0. || p.height <= 0. { continue; }
             let Some(tile) = self.tiles().find(|t| self.conscia.id(t.window().id()) == Some(p.window)) else { continue; };
@@ -1451,6 +1562,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             let crop = Rectangle::new(Point::from((p.x - ring, p.y - ring)),
                 Size::from((p.width + 2. * ring, p.height + 2. * ring)))
                 .to_physical_precise_round(scale);
+            let crop = if matches!(p.role, conscia::geometry::WindowRole::Reel { .. }) && self.conscia.transition.is_none() {
+                let Some(crop) = reel_clip.and_then(|reel| crop.intersection(reel)) else { continue; };
+                crop
+            } else { crop };
             // Reel never exposes client popups or input surfaces.
             if p.role == conscia::geometry::WindowRole::Main && self.conscia.transition.is_none() && self.conscia.drag.is_none() {
                 window.render_popups(ctx.r(), tile.window_loc(), scale, p.opacity,
@@ -1463,36 +1578,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                             push(ScrollingSpaceRenderElement::Conscia(elem));
                         }
                     });
-            }
-            // Elements are front-to-back. Overlay after popups, before the thumbnail,
-            // without applying its content scale to the fixed-size logical icon.
-            if matches!(p.role, conscia::geometry::WindowRole::Reel { .. })
-                && !self.conscia.model.in_main(p.window) {
-                let width = size.w * factor;
-                let height = size.h * factor;
-                let icon_size = crate::render_helpers::app_icon::ICON_SIZE;
-                let icon_extent = f64::from(icon_size);
-                if width >= 8. + icon_extent && height >= 8. + icon_extent {
-                    // Always anchor to the bottom corner facing the Main area.
-                    let x = if self.conscia.model.side == conscia::core::ReelSide::Left {
-                        pos.x + width - 8. - icon_extent
-                    } else { pos.x + 8. };
-                    let location = Point::from((x, pos.y + height - 8. - icon_extent));
-                    let buffer = self.reel_icons.get(window.app_id().as_deref(), self.scale);
-                    if let Ok(element) = smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement::from_buffer(
-                        ctx.renderer, location.to_physical_precise_round::<_, i32>(scale).to_f64(),
-                        &buffer, Some(p.opacity), None, Some(Size::from((icon_size, icon_size))),
-                        smithay::backend::renderer::element::Kind::Unspecified,
-                    ) {
-                        let bounds = Rectangle::new(pos, Size::from((width, height)))
-                            .to_physical_precise_round(scale);
-                        if let Some(bounds) = bounds.intersection(self.working_area.to_physical_precise_round(scale)) {
-                            if let Some(element) = CropRenderElement::from_element(element, scale, bounds) {
-                                push(ScrollingSpaceRenderElement::ReelIcon(element));
-                            }
-                        }
-                    }
-                }
             }
             let push_window = &mut |elem| {
                 let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), factor);

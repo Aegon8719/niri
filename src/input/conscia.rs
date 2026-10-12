@@ -24,8 +24,21 @@ struct PadReelSequence {
 
 
 impl State {
+    pub(super) fn conscia_show_desktop(&mut self, show: bool) {
+        if self.niri.is_locked() || self.niri.screenshot_ui.is_open()
+            || self.niri.window_mru_ui.is_open() { return; }
+        self.conscia_pointer_drag_cancel();
+        self.conscia_pointer_resize_end();
+        self.niri.layout.close_overview();
+        self.niri.conscia_desktop = show;
+        self.niri.focus_layer_surface_if_on_demand(None);
+        self.update_keyboard_focus();
+        self.update_pointer_contents();
+        self.niri.queue_redraw_all();
+    }
+
     fn conscia_pointer_allowed(&self) -> bool {
-        !self.niri.is_locked() && !self.niri.layout.is_overview_open()
+        !self.niri.is_locked() && !self.niri.conscia_desktop && !self.niri.layout.is_overview_open()
             && !self.niri.screenshot_ui.is_open() && !self.niri.window_mru_ui.is_open()
             && !self.niri.seat.get_pointer().unwrap().is_grabbed()
             && !self.niri.seat.get_keyboard().unwrap().is_grabbed()
@@ -77,6 +90,7 @@ impl State {
             }
             if gesture.axis == 1 {
                 let ws = self.niri.layout.monitor_for_output_mut(&gesture.output).unwrap().active_workspace();
+                ws.scrolling_mut().conscia_scroll_gesture(!ended);
                 ws.conscia_scroll(if was_vertical { dy.unwrap_or(0.) } else { gesture.y }, false);
                 self.niri.queue_redraw_all();
             } else if ended && gesture.axis == 2 && gesture.x * gesture.outward >= 80.
@@ -86,6 +100,11 @@ impl State {
                         mapped.toplevel().send_close();
                     }
                 }
+            }
+        }
+        if ended || gesture.cancelled {
+            if let Some(ws) = self.niri.layout.workspaces_mut().find(|ws| ws.id() == gesture.workspace) {
+                ws.scrolling_mut().conscia_scroll_gesture(false);
             }
         }
         if !ended { self.niri.conscia_pad_reel.sequence = Some(gesture); }
@@ -99,13 +118,26 @@ impl State {
         if under.layer.is_some() { return false; }
         let Some((output, local)) = self.niri.output_under(pos) else { return false; };
         let output = output.clone();
+        let super_pressed = self.niri.seat.get_keyboard().unwrap().modifier_state().logo;
+        let mut close_target = None;
         let Some(mon) = self.niri.layout.monitor_for_output_mut(&output) else { return false; };
         let ws = mon.active_workspace();
         let handled = if left && ws.conscia_resize_start(local) { true }
             else if ws.conscia_reel_at(local) {
-                if left || right { ws.conscia_click(local, right); }
+                if right {
+                    let scrolling = ws.scrolling();
+                    let (target, reel, _, _) = scrolling.conscia_touch_target(local);
+                    close_target = target.filter(|target| reel && scrolling.conscia_touch_matches(target, true));
+                } else if left {
+                    ws.conscia_click(local, super_pressed);
+                }
                 true
             } else { false };
+        if let Some(target) = close_target {
+            if let Some((_, mapped)) = self.niri.layout.windows().find(|(_, w)| w.window == target) {
+                mapped.toplevel().send_close();
+            }
+        }
         if handled {
             self.niri.focus_layer_surface_if_on_demand(None);
             self.niri.layout.focus_output(&output);

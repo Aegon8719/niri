@@ -2341,11 +2341,16 @@ impl State {
             Action::StopCast(session_id) => {
                 self.niri.stop_cast(CastSessionId::from(session_id));
             }
+            Action::ToggleShowDesktop => {
+                self.conscia_show_desktop(!self.niri.conscia_desktop);
+            }
             Action::ToggleOverview => {
+                if self.niri.conscia_desktop { self.conscia_show_desktop(false); }
                 self.niri.layout.toggle_overview();
                 self.niri.queue_redraw_all();
             }
             Action::OpenOverview => {
+                if self.niri.conscia_desktop { self.conscia_show_desktop(false); }
                 if self.niri.layout.open_overview() {
                     self.niri.queue_redraw_all();
                 }
@@ -4053,8 +4058,7 @@ impl State {
             return;
         } else if event.fingers() == 4 {
             self.niri.conscia_swipe_owned = true;
-            self.niri.layout.overview_gesture_begin();
-            self.niri.queue_redraw_all();
+            // Four-finger swipes are reserved; desktop uses pinch gestures.
 
             // We handled this event.
             return;
@@ -4209,6 +4213,8 @@ impl State {
     }
 
     fn on_gesture_pinch_begin<I: InputBackend>(&mut self, event: I::GesturePinchBeginEvent) {
+        self.niri.conscia_pinch = matches!(event.fingers(), 3 | 4).then_some((event.fingers(), 1.));
+        if self.niri.conscia_pinch.is_some() { return; }
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.niri.seat.get_pointer().unwrap();
 
@@ -4227,6 +4233,10 @@ impl State {
     }
 
     fn on_gesture_pinch_update<I: InputBackend>(&mut self, event: I::GesturePinchUpdateEvent) {
+        if let Some((_, scale)) = &mut self.niri.conscia_pinch {
+            *scale = event.scale();
+            return;
+        }
         let pointer = self.niri.seat.get_pointer().unwrap();
 
         if self.update_pointer_contents() {
@@ -4262,6 +4272,24 @@ impl State {
     }
 
     fn on_gesture_pinch_end<I: InputBackend>(&mut self, event: I::GesturePinchEndEvent) {
+        if let Some((fingers, scale)) = self.niri.conscia_pinch.take() {
+            if !event.cancelled() && scale.is_finite() {
+                if fingers == 4 {
+                    if scale <= 0.75 { self.conscia_show_desktop(true); }
+                    else if scale >= 1.25 { self.conscia_show_desktop(false); }
+                } else if !self.niri.is_locked() && !self.niri.conscia_desktop
+                    && !self.niri.screenshot_ui.is_open() && !self.niri.window_mru_ui.is_open()
+                    && !self.niri.layout.is_overview_open() && (scale <= 0.75 || scale >= 1.25) {
+                    let pos = self.niri.seat.get_pointer().unwrap().current_location();
+                    let output = self.niri.output_under(pos).map(|(output, _)| output.clone());
+                    if let Some(mon) = output.as_ref().and_then(|output| self.niri.layout.monitor_for_output_mut(output)) {
+                        mon.active_workspace().scrolling_mut().conscia_touch_expand(scale >= 1.25);
+                    }
+                    self.niri.queue_redraw_all();
+                }
+            }
+            return;
+        }
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.niri.seat.get_pointer().unwrap();
 

@@ -61,6 +61,7 @@ pub struct ClosingWindow {
 
     /// Random seed for the shader.
     random_seed: f32,
+    fly_out: Option<(f64, f64)>,
 }
 
 niri_render_elements! {
@@ -154,7 +155,12 @@ impl ClosingWindow {
             blocked_out_buffer_offset,
             anim_state: AnimationState::new(blocker, anim),
             random_seed: fastrand::f32(),
+            fly_out: None,
         })
+    }
+
+    pub fn set_fly_out(&mut self, scale: f64, distance: f64) {
+        self.fly_out = Some((scale, distance));
     }
 
     pub fn advance_animations(&mut self) {
@@ -192,6 +198,24 @@ impl ClosingWindow {
         } else {
             (&self.buffer, self.buffer_offset)
         };
+
+        if let Some((factor, distance)) = self.fly_out {
+            let progress = match &self.anim_state {
+                AnimationState::Waiting { .. } => 0.,
+                AnimationState::Animating(anim) => anim.clamped_value().clamp(0., 1.),
+            };
+            let elem = TextureRenderElement::from_texture_buffer(
+                buffer.clone(), Point::from((0., 0.)), 1., None, None, Kind::Unspecified,
+            );
+            let elem = RescaleRenderElement::from_element(
+                PrimaryGpuTextureRenderElement(elem), Point::from((0, 0)), factor,
+            );
+            let mut location = self.pos + offset.upscale(factor);
+            location.x += distance * progress - view_rect.loc.x;
+            return RelocateRenderElement::from_element(
+                elem, location.to_physical_precise_round(scale), Relocate::Relative,
+            ).into();
+        }
 
         let anim = match &self.anim_state {
             AnimationState::Waiting { .. } => {

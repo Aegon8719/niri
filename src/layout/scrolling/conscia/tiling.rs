@@ -1,9 +1,18 @@
 //! Persistent binary splits for the windows inside a Main/Reel group.
-use super::core::WindowId;
+use super::core::{ReelSide, WindowId};
 use super::geometry::{Rect, TileSplit};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dock { Left, Right, Top, Bottom, Center }
+
+impl Dock {
+    pub fn inner(side: ReelSide) -> Self {
+        match side {
+            ReelSide::Left => Self::Left,
+            ReelSide::Right => Self::Right,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum Tree {
@@ -183,20 +192,54 @@ impl Tree {
         (rects, splits)
     }
 
+    fn orient_to_area(&mut self, area: Rect) {
+        let Self::Split { vertical, ratio, first, second } = self else { return; };
+        *vertical = area.width >= area.height;
+        let extent = if *vertical { area.width } else { area.height };
+        let size = if extent > 1 { ((extent as f64 * *ratio).floor() as i32).clamp(1, extent - 1) } else { 0 };
+        let (mut a, mut b) = (area, area);
+        if *vertical { a.width = size; b.x += size; b.width -= size; }
+        else { a.height = size; b.y += size; b.height -= size; }
+        first.orient_to_area(a);
+        second.orient_to_area(b);
+    }
+
     /// Reconcile membership while preserving surviving branches and their ratios.
-    /// Merging groups grafts the incoming subtree next to the focused leaf.
-    pub fn reconcile(ids: &[WindowId], previous: &[Self], area: Rect, preferred: Option<WindowId>) -> Option<Self> {
+    /// Merging groups continues at the newest leaf, independent of keyboard focus.
+    /// Keep the aspect-driven split axis; only horizontal placement follows the reel side.
+    pub fn reconcile(ids: &[WindowId], previous: &[Self], area: Rect, _preferred: Option<WindowId>, insertion: Option<Dock>) -> Option<Self> {
         let anchor = *ids.first()?;
         let mut tree = previous.iter().find(|t| t.contains(anchor))
             .cloned().and_then(|t| t.retain(ids)).unwrap_or(Self::Leaf(anchor));
         for &id in ids {
             if tree.contains(id) { continue; }
             let missing: Vec<_> = ids.iter().copied().filter(|id| !tree.contains(*id)).collect();
-            let incoming = previous.iter().find(|t| t.contains(id)).cloned()
+            let mut incoming = previous.iter().find(|t| t.contains(id)).cloned()
                 .and_then(|t| t.retain(&missing)).unwrap_or(Self::Leaf(id));
-            let target = preferred.filter(|id| tree.contains(*id)).unwrap_or_else(|| *tree.leaves().last().unwrap());
+            let target = ids.iter().rev().copied().find(|id| tree.contains(*id)).unwrap();
             let rect = tree.geometry(area).0.into_iter().find(|(id, _)| *id == target).unwrap().1;
-            let dock = if rect.width >= rect.height { Dock::Right } else { Dock::Bottom };
+            let dock = if rect.width >= rect.height {
+                insertion.unwrap_or(Dock::Right)
+            } else {
+                Dock::Bottom
+            };
+            if insertion.is_some() {
+                let mut destination = rect;
+                match dock {
+                    Dock::Left => destination.width /= 2,
+                    Dock::Right => {
+                        destination.x += rect.width / 2;
+                        destination.width -= rect.width / 2;
+                    }
+                    Dock::Top => destination.height /= 2,
+                    Dock::Bottom => {
+                        destination.y += rect.height / 2;
+                        destination.height -= rect.height / 2;
+                    }
+                    Dock::Center => (),
+                }
+                incoming.orient_to_area(destination);
+            }
             tree.insert(target, incoming, dock);
         }
         Some(tree)

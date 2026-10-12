@@ -347,6 +347,8 @@ pub struct Niri {
     pub conscia_touch: crate::input::conscia_touch::Controller,
     pub conscia_pad_reel: crate::input::conscia::PadReel,
     pub conscia_swipe_owned: bool,
+    pub conscia_desktop: bool,
+    pub conscia_pinch: Option<(u32, f64)>,
     /// Button codes of the mouse buttons to suppress.
     pub suppressed_buttons: HashSet<u32>,
     pub bind_cooldown_timers: HashMap<Key, RegistrationToken>,
@@ -1294,6 +1296,7 @@ impl State {
             };
 
             let layout_focus = || {
+                if self.niri.conscia_desktop { return None; }
                 self.niri
                     .layout
                     .focus()
@@ -2709,6 +2712,8 @@ impl Niri {
             conscia_touch: Default::default(),
             conscia_pad_reel: Default::default(),
             conscia_swipe_owned: false,
+            conscia_desktop: false,
+            conscia_pinch: None,
             suppressed_keys: HashSet::new(),
             super_tap: Default::default(),
             suppressed_buttons: HashSet::new(),
@@ -3525,11 +3530,13 @@ impl Niri {
         };
 
         let interactive_moved_window_under = || {
+            if self.conscia_desktop { return None; }
             self.layout
                 .interactive_moved_window_under(output, pos_within_output)
                 .map(mapped_hit_data)
         };
         let window_under = || {
+            if self.conscia_desktop { return None; }
             self.layout
                 .window_under(output, pos_within_output)
                 .map(mapped_hit_data)
@@ -4500,6 +4507,17 @@ impl Niri {
         // The overlay layer elements go next.
         push_popups_from_layer!(Layer::Overlay);
         push_normal_from_layer!(Layer::Overlay);
+
+        if self.conscia_desktop {
+            push_popups_from_layer!(Layer::Top);
+            push_normal_from_layer!(Layer::Top);
+            push_popups_from_layer!(Layer::Bottom);
+            push_popups_from_layer!(Layer::Background);
+            push_normal_from_layer!(Layer::Bottom);
+            push_normal_from_layer!(Layer::Background);
+            push(backdrop);
+            return;
+        }
 
         // When rendering above the top layer, we put the regular monitor elements first.
         // Otherwise, we will render all layer-shell pop-ups and the top layer on top.

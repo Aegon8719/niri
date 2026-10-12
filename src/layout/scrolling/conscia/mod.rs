@@ -71,7 +71,8 @@ pub(super) struct State<I> {
     pub parked: Option<WindowId>,
     pub dialogs: Vec<(WindowId, WindowId)>,
     pub dialog_scene: Vec<SceneItem>,
-    pub remainder: f64,
+    pub scroll_active: bool,
+    pub reel_snap: Option<(Duration, f64, f64)>,
     pub last_scroll: Option<Duration>,
     pub reel_bounce: Option<(Duration, f64)>,
     pub reel_bounce_offset: f64,
@@ -86,7 +87,7 @@ impl<I: PartialEq + Clone> State<I> {
     pub fn new() -> Self {
         Self {
             model: core::Workspace::default(), ids: Vec::new(), layout: None, inset: 0, main_maximized: false,
-            transition: None, expanded: None, parked: None, dialogs: Vec::new(), dialog_scene: Vec::new(), remainder: 0.,
+            transition: None, expanded: None, parked: None, dialogs: Vec::new(), dialog_scene: Vec::new(), scroll_active: false, reel_snap: None,
             last_scroll: None, reel_bounce: None, reel_bounce_offset: 0., gesture: None, resize: None,
             trees: Vec::new(), last_active: None, drag: None,
         }
@@ -108,7 +109,8 @@ impl<I: PartialEq + Clone> State<I> {
     }
 
     pub fn end_scroll(&mut self) {
-        self.remainder = 0.;
+        self.scroll_active = false;
+        self.reel_snap = None;
         self.last_scroll = None;
     }
 
@@ -122,7 +124,8 @@ impl<I: PartialEq + Clone> State<I> {
             let members = if Some(anchor) == self.model.main() { self.model.main_tiles() }
                 else { self.model.reel_group(anchor) };
             let ids: Vec<_> = std::iter::once(anchor).chain(members.iter().copied()).collect();
-            if let Some(tree) = Tree::reconcile(&ids, &previous, area, self.last_active) {
+            let insertion = (Some(anchor) == self.model.main()).then(|| Dock::inner(self.model.side));
+            if let Some(tree) = Tree::reconcile(&ids, &previous, area, self.last_active, insertion) {
                 self.trees.push(tree);
             }
         }
@@ -299,7 +302,8 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         let width = if ring.off { 0. } else {
             (ring.width * self.scale).round().max(1.) / self.scale
         };
-        (f64::from(self.conscia.inset) - width).max(0.)
+        let inset = (self.options.layout.gaps / 2. + if ring.off { 0. } else { ring.width }).ceil().max(0.);
+        (inset - width).max(0.)
     }
 
     pub(super) fn conscia_relayout(&mut self) {
@@ -443,6 +447,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     pub(super) fn conscia_changed(&mut self, from: Vec<SceneItem>, animate: bool) {
         self.conscia.drag = None;
         self.conscia.end_scroll();
+        self.conscia.model.set_offset(self.conscia.model.offset().round(), self.conscia.slots());
         self.conscia.reel_bounce = None;
         self.conscia.reel_bounce_offset = 0.;
         self.conscia.resize = None;
@@ -503,7 +508,8 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         ids.push(id);
         ids.extend_from_slice(self.conscia.model.reel_group(id));
         let preferred = self.conscia.model.active_main();
-        let Some(tree) = Tree::reconcile(&ids, &self.conscia.trees, layout.main, preferred) else { return false; };
+        let insertion = Some(Dock::inner(self.conscia.model.side));
+        let Some(tree) = Tree::reconcile(&ids, &self.conscia.trees, layout.main, preferred, insertion) else { return false; };
         if tree.geometry(layout.main).0.iter().any(|(_, r)| r.width <= 0 || r.height <= 0) { return false; }
         let from = self.conscia.current_scene();
         self.conscia.last_active = preferred;
@@ -526,11 +532,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         let Some(id) = self.conscia.id(window) else { return false; };
         if self.conscia.dialogs.iter().any(|(dialog, _)| *dialog == id) { return false; }
         let from = self.conscia.current_scene();
-        if self.conscia.model.main() == Some(id) && self.conscia.model.windows().len() == 1
-            && self.conscia.model.main_tiles().is_empty() {
-            self.conscia.model.remove(id, self.conscia.slots());
-            self.conscia.parked = Some(id);
-        } else if !self.conscia.model.minimize(id) { return false; }
+        if !self.conscia.model.minimize(id) { return false; }
         self.conscia.expanded = None;
         self.conscia_changed(from, true);
         true
@@ -575,18 +577,31 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         }
         self.conscia.reel_bounce = None;
         self.conscia.reel_bounce_offset = 0.;
-        let now = self.clock.now();
-        if self.conscia.last_scroll.is_none_or(|last| now.saturating_sub(last) > Duration::from_millis(140))
-            || self.conscia.remainder * delta < 0. { self.conscia.remainder = 0.; }
-        self.conscia.last_scroll = Some(now);
-        self.conscia.remainder += delta;
-        let steps = self.conscia.remainder.trunc();
-        self.conscia.remainder -= steps;
-        self.conscia.model.set_offset(offset + steps, count);
-        if steps != 0. && (self.conscia.model.offset() == 0. || self.conscia.model.offset() == maximum) {
-            // Reaching the boundary only stops scrolling. A subsequent outward
-            // scroll event triggers the bounce in the boundary branch above.
-            self.conscia.end_scroll();
+        if slots && !self.options.animations.off {
+            let target = self.conscia.reel_snap.map_or(offset, |(_, _, target)| target);
+            let target = (target + delta).round().clamp(0., maximum);
+            self.conscia.last_scroll = None;
+            self.conscia.reel_snap = Some((self.clock.now(), offset, target));
+            return;
+        }
+        self.conscia.reel_snap = None;
+        self.conscia.last_scroll = Some(self.clock.now());
+        self.conscia.model.set_offset(offset + delta, count);
+    }
+
+    pub fn conscia_scroll_gesture(&mut self, active: bool) {
+        self.conscia.scroll_active = active;
+        if !active { self.conscia_scroll_finish(); }
+    }
+
+    pub(super) fn conscia_scroll_finish(&mut self) {
+        self.conscia.last_scroll = None;
+        let from = self.conscia.model.offset();
+        let to = from.round();
+        if self.options.animations.off {
+            self.conscia.model.set_offset(to, self.conscia.slots());
+        } else if from != to {
+            self.conscia.reel_snap = Some((self.clock.now(), from, to));
         }
     }
 
@@ -621,6 +636,8 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     pub(super) fn conscia_expand(&mut self, window: &W::Id, enabled: bool, fullscreen: bool) -> bool {
         let Some(id) = self.conscia.id(window) else { return false; };
         if !self.conscia.model.in_main(id) { return false; }
+        if enabled && !fullscreen && self.conscia.model.windows().len() == 1
+            && self.conscia.model.main_tiles().is_empty() { return false; }
         if !enabled && self.conscia.expanded.is_none_or(|(key, _)| key != id) { return false; }
         let next = if enabled { Some((id, fullscreen)) } else { None };
         if self.conscia.expanded == next { return false; }
