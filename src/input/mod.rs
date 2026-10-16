@@ -2578,10 +2578,6 @@ impl State {
                 } else if let Some(output) = grab.workspace_switch_output() {
                     return Some((output.clone(), false));
                 }
-            } else if let Some(grab) = grab.downcast_ref::<MoveGrab>() {
-                if let Some(output) = grab.view_offset_output() {
-                    return Some((output.clone(), true));
-                }
             }
             None
         });
@@ -3014,7 +3010,7 @@ impl State {
                         let start_data = AnyStartData::Pointer(start_data);
                         let icon = CursorIcon::Grabbing;
                         if let Some(grab) =
-                            MoveGrab::new(self, start_data, window.clone(), false, Some(icon))
+                            MoveGrab::new(self, start_data, window.clone(), Some(icon))
                         {
                             pointer.set_grab(self, grab, serial, Focus::Clear);
 
@@ -3865,7 +3861,6 @@ impl State {
                                     self,
                                     start_data,
                                     window.clone(),
-                                    true,
                                     Some(icon),
                                 ) {
                                     tool.set_grab(self, grab, time, serial, Focus::Clear);
@@ -4273,17 +4268,17 @@ impl State {
 
     fn on_gesture_pinch_end<I: InputBackend>(&mut self, event: I::GesturePinchEndEvent) {
         if let Some((fingers, scale)) = self.niri.conscia_pinch.take() {
-            if !event.cancelled() && scale.is_finite() {
+            if !event.cancelled() {
+                let Some(expanded) = conscia_touch::pinch_expanded(scale) else { return; };
                 if fingers == 4 {
-                    if scale <= 0.75 { self.conscia_show_desktop(true); }
-                    else if scale >= 1.25 { self.conscia_show_desktop(false); }
+                    self.conscia_show_desktop(!expanded);
                 } else if !self.niri.is_locked() && !self.niri.conscia_desktop
                     && !self.niri.screenshot_ui.is_open() && !self.niri.window_mru_ui.is_open()
-                    && !self.niri.layout.is_overview_open() && (scale <= 0.75 || scale >= 1.25) {
+                    && !self.niri.layout.is_overview_open() {
                     let pos = self.niri.seat.get_pointer().unwrap().current_location();
                     let output = self.niri.output_under(pos).map(|(output, _)| output.clone());
                     if let Some(mon) = output.as_ref().and_then(|output| self.niri.layout.monitor_for_output_mut(output)) {
-                        mon.active_workspace().scrolling_mut().conscia_touch_expand(scale >= 1.25);
+                        mon.active_workspace().scrolling_mut().conscia_touch_expand(expanded);
                     }
                     self.niri.queue_redraw_all();
                 }
@@ -4473,7 +4468,7 @@ impl State {
                         location: pos,
                     };
                     let start_data = AnyStartData::Touch(start_data);
-                    if let Some(grab) = MoveGrab::new(self, start_data, window.clone(), true, None)
+                    if let Some(grab) = MoveGrab::new(self, start_data, window.clone(), None)
                     {
                         handle.set_grab(self, grab, serial);
                     }

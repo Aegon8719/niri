@@ -345,7 +345,7 @@ pub struct Niri {
     pub suppressed_keys: HashSet<Keycode>,
     pub super_tap: crate::input::super_tap::SuperTap,
     pub conscia_touch: crate::input::conscia_touch::Controller,
-    pub conscia_pad_reel: crate::input::conscia::PadReel,
+    pub(crate) conscia_pad_reel: crate::input::conscia::PadReel,
     pub conscia_swipe_owned: bool,
     pub conscia_desktop: bool,
     pub conscia_pinch: Option<(u32, f64)>,

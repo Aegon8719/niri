@@ -362,7 +362,7 @@ pub struct Layout<W: LayoutElement> {
     /// Ongoing interactive move.
     interactive_move: Option<InteractiveMoveState<W>>,
     /// Ongoing drag-and-drop operation.
-    dnd: Option<DndData<W>>,
+    dnd: Option<DndData>,
     /// Clock for driving animations.
     clock: Clock,
     /// Time that we last updated render elements for.
@@ -458,26 +458,9 @@ struct InteractiveMoveData<W: LayoutElement> {
 }
 
 #[derive(Debug)]
-pub struct DndData<W: LayoutElement> {
+pub struct DndData {
     /// Output where the pointer is currently located.
     output: Output,
-    /// Current pointer position within output.
-    pointer_pos_within_output: Point<f64, Logical>,
-    /// Ongoing DnD hold to activate something.
-    hold: Option<DndHold<W>>,
-}
-
-#[derive(Debug)]
-struct DndHold<W: LayoutElement> {
-    /// Time when we started holding on the target.
-    start_time: Duration,
-    target: DndHoldTarget<W::Id>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum DndHoldTarget<WindowId> {
-    Window(WindowId),
-    Workspace(WorkspaceId),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -4261,14 +4244,10 @@ impl<W: LayoutElement> Layout<W> {
         move_.output == *output
     }
 
-    pub fn dnd_update(&mut self, output: Output, pointer_pos_within_output: Point<f64, Logical>) {
+    pub fn dnd_update(&mut self, output: Output, _pointer_pos_within_output: Point<f64, Logical>) {
         let begin_gesture = self.dnd.is_none();
 
-        self.dnd = Some(DndData {
-            output,
-            pointer_pos_within_output,
-            hold: None,
-        });
+        self.dnd = Some(DndData { output });
 
         if begin_gesture {
             for mon in self.monitors_mut() {

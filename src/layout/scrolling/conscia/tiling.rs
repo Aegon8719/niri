@@ -110,14 +110,8 @@ impl Tree {
                 && y <= area.y as f64 + area.height as f64 * 0.75 {
                 return Some(tree.clone());
             }
-            let Tree::Split { vertical, first, second, .. } = tree else { return None; };
-            let split = tree.geometry(area).1[0];
-            let (mut a, mut b) = (area, area);
-            if *vertical {
-                a.width = split.position - area.x; b.x = split.position; b.width -= a.width;
-            } else {
-                a.height = split.position - area.y; b.y = split.position; b.height -= a.height;
-            }
+            let Tree::Split { vertical, ratio, first, second } = tree else { return None; };
+            let (a, b) = area.split(*vertical, *ratio);
             target(first, a, source, size, x, y).or_else(|| target(second, b, source, size, x, y))
         }
         let group = target(self, area, source, source_rect, x, y)?;
@@ -175,13 +169,9 @@ impl Tree {
             match tree {
                 Tree::Leaf(id) => rects.push((*id, area)),
                 Tree::Split { vertical, ratio, first, second } => {
-                    let extent = if *vertical { area.width } else { area.height };
-                    let size = if extent > 1 { ((extent as f64 * ratio).floor() as i32).clamp(1, extent - 1) } else { 0 };
+                    let (a, b) = area.split(*vertical, *ratio);
                     splits.push(TileSplit { index: splits.len(), area, vertical: *vertical,
-                        position: if *vertical { area.x + size } else { area.y + size } });
-                    let (mut a, mut b) = (area, area);
-                    if *vertical { a.width = size; b.x += size; b.width -= size; }
-                    else { a.height = size; b.y += size; b.height -= size; }
+                        position: if *vertical { b.x } else { b.y } });
                     visit(first, a, rects, splits);
                     visit(second, b, rects, splits);
                 }
@@ -195,11 +185,7 @@ impl Tree {
     fn orient_to_area(&mut self, area: Rect) {
         let Self::Split { vertical, ratio, first, second } = self else { return; };
         *vertical = area.width >= area.height;
-        let extent = if *vertical { area.width } else { area.height };
-        let size = if extent > 1 { ((extent as f64 * *ratio).floor() as i32).clamp(1, extent - 1) } else { 0 };
-        let (mut a, mut b) = (area, area);
-        if *vertical { a.width = size; b.x += size; b.width -= size; }
-        else { a.height = size; b.y += size; b.height -= size; }
+        let (a, b) = area.split(*vertical, *ratio);
         first.orient_to_area(a);
         second.orient_to_area(b);
     }
@@ -207,7 +193,7 @@ impl Tree {
     /// Reconcile membership while preserving surviving branches and their ratios.
     /// Merging groups continues at the newest leaf, independent of keyboard focus.
     /// Keep the aspect-driven split axis; only horizontal placement follows the reel side.
-    pub fn reconcile(ids: &[WindowId], previous: &[Self], area: Rect, _preferred: Option<WindowId>, insertion: Option<Dock>) -> Option<Self> {
+    pub fn reconcile(ids: &[WindowId], previous: &[Self], area: Rect, insertion: Option<Dock>) -> Option<Self> {
         let anchor = *ids.first()?;
         let mut tree = previous.iter().find(|t| t.contains(anchor))
             .cloned().and_then(|t| t.retain(ids)).unwrap_or(Self::Leaf(anchor));

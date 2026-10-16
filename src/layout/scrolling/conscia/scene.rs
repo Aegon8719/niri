@@ -12,6 +12,12 @@ pub struct SceneItem {
     pub opacity: f32,
     pub role: WindowRole,
 }
+impl SceneItem {
+    pub fn hit_test(&self, x: f64, y: f64) -> bool {
+        self.opacity > 0. && x >= self.x && x < self.x + self.width
+            && y >= self.y && y < self.y + self.height
+    }
+}
 pub fn scene(layout: &LayoutSnapshot, offset: f64) -> Vec<SceneItem> {
     let mut reel_index = 0;
     layout
@@ -91,15 +97,5 @@ impl Transition {
                 }
             })
             .collect()
-    }
-}
-/// Exponential convergence followed by exact integer settling, independent of refresh rate.
-pub fn snap_step(offset: f64, dt: f64) -> f64 {
-    let target = offset.round();
-    let next = target + (offset - target) * (-22. * dt.clamp(0., 0.1)).exp();
-    if (next - target).abs() < 0.001 {
-        target
-    } else {
-        next
     }
 }

@@ -60,25 +60,26 @@ fn horizontal(delta: Point<f64, Logical>) -> bool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum MultiAction { Up, Down, Expand, Restore, DesktopShow, DesktopRestore }
+enum MultiAction { Up, Down, Expand(bool), Desktop(bool) }
+
+pub(super) fn pinch_expanded(scale: f64) -> Option<bool> {
+    if !scale.is_finite() { return None; }
+    if scale >= 1.25 { Some(true) }
+    else if scale <= 0.75 { Some(false) }
+    else { None }
+}
 
 fn multi_action(fingers: &[Finger], peak: usize, main: bool) -> Option<MultiAction> {
     if fingers.len() != peak { return None; }
     let delta = centroid(fingers, false) - centroid(fingers, true);
-    if peak == 4 {
+    if peak == 4 || (peak == 3 && main) {
         let before = spread(fingers, true);
         let after = spread(fingers, false);
         if before >= 20. && (after - before).abs() >= 30. {
-            if after / before <= 0.75 { return Some(MultiAction::DesktopShow); }
-            if after / before >= 1.25 { return Some(MultiAction::DesktopRestore); }
-        }
-    }
-    if peak == 3 && main {
-        let before = spread(fingers, true);
-        let after = spread(fingers, false);
-        if before >= 20. && (after - before).abs() >= 30. {
-            if after / before >= 1.25 { return Some(MultiAction::Expand); }
-            if after / before <= 0.75 { return Some(MultiAction::Restore); }
+            if let Some(expanded) = pinch_expanded(after / before) {
+                return Some(if peak == 4 { MultiAction::Desktop(!expanded) }
+                    else { MultiAction::Expand(expanded) });
+            }
         }
     }
     if peak == 3 && delta.y.abs() >= SWIPE && delta.y.abs() > delta.x.abs() * 2. {
@@ -215,9 +216,8 @@ impl State {
             match action {
                 Some(MultiAction::Up) => mon.switch_workspace_up(),
                 Some(MultiAction::Down) => mon.switch_workspace_down(),
-                Some(MultiAction::Expand) => mon.active_workspace().scrolling_mut().conscia_touch_expand(true),
-                Some(MultiAction::Restore) => mon.active_workspace().scrolling_mut().conscia_touch_expand(false),
-                Some(MultiAction::DesktopShow | MultiAction::DesktopRestore) | None => (),
+                Some(MultiAction::Expand(expanded)) => mon.active_workspace().scrolling_mut().conscia_touch_expand(expanded),
+                Some(MultiAction::Desktop(_)) | None => (),
             }
             if s.peak == 1 && s.owned {
                 let ws = mon.active_workspace();
@@ -246,8 +246,7 @@ impl State {
                 }
             }
             match action {
-                Some(MultiAction::DesktopShow) => self.conscia_show_desktop(true),
-                Some(MultiAction::DesktopRestore) => self.conscia_show_desktop(false),
+                Some(MultiAction::Desktop(show)) => self.conscia_show_desktop(show),
                 _ => (),
             }
             if s.owned {

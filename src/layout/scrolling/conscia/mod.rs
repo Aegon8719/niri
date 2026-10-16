@@ -1,6 +1,6 @@
 //! Conscia layout policy, hosted by niri's workspace and protocol machinery.
 //!
-//! `core`, `geometry`, and `scene` are vendored from ../Conscia. Columns are only
+//! Columns are only
 //! transport containers for niri's workspace/output actions, never layout authority.
 pub(super) mod core;
 pub(super) mod geometry;
@@ -27,8 +27,7 @@ pub(super) struct Drag {
 
 #[derive(Debug)]
 struct SnapHint {
-    from: Rectangle<f64, Logical>,
-    to: Rectangle<f64, Logical>,
+    rect: Rectangle<f64, Logical>,
     from_alpha: f32,
     to_alpha: f32,
     start: Duration,
@@ -39,22 +38,20 @@ impl SnapHint {
     fn sample(&self) -> (Rectangle<f64, Logical>, f32) {
         let t = self.progress.clamp(0., 1.);
         let t = t * t * (3. - 2. * t);
-        let rect = Rectangle::new(self.from.loc + (self.to.loc - self.from.loc).upscale(t),
-            self.from.size + (self.to.size - self.from.size).upscale(t));
-        (rect, self.from_alpha + (self.to_alpha - self.from_alpha) * t as f32)
+        (self.rect, self.from_alpha + (self.to_alpha - self.from_alpha) * t as f32)
     }
 }
 
 impl Drag {
     fn set_hint(&mut self, target: Option<Rectangle<f64, Logical>>, now: Duration, animate: bool) {
-        let Some(rect) = target.or_else(|| self.hint.as_ref().map(|hint| hint.to)) else { return; };
+        let Some(rect) = target.or_else(|| self.hint.as_ref().map(|hint| hint.rect)) else { return; };
         let alpha = if target.is_some() { 1. } else { 0. };
-        if self.hint.as_ref().is_some_and(|hint| hint.to == rect && hint.to_alpha == alpha) { return; }
+        if self.hint.as_ref().is_some_and(|hint| hint.rect == rect && hint.to_alpha == alpha) { return; }
         // Keep the landing geometry exact even when released mid-animation.
         // Only opacity animates; interpolating rectangles shows a false target.
-        let from_alpha = self.hint.as_ref().filter(|hint| hint.to == rect)
+        let from_alpha = self.hint.as_ref().filter(|hint| hint.rect == rect)
             .map_or(0., |hint| hint.sample().1);
-        self.hint = Some(SnapHint { from: rect, to: rect, from_alpha, to_alpha: alpha, start: now,
+        self.hint = Some(SnapHint { rect, from_alpha, to_alpha: alpha, start: now,
             progress: if animate { 0. } else { 1. } });
     }
 }
@@ -68,7 +65,6 @@ pub(super) struct State<I> {
     pub main_maximized: bool,
     pub transition: Option<(Duration, Transition)>,
     pub expanded: Option<(WindowId, bool)>,
-    pub parked: Option<WindowId>,
     pub dialogs: Vec<(WindowId, WindowId)>,
     pub dialog_scene: Vec<SceneItem>,
     pub scroll_active: bool,
@@ -79,7 +75,6 @@ pub(super) struct State<I> {
     pub gesture: Option<bool>,
     pub resize: Option<(geometry::TileSplit, Point<f64, Logical>, i32)>,
     pub trees: Vec<Tree>,
-    pub last_active: Option<WindowId>,
     pub drag: Option<Drag>,
 }
 
@@ -87,9 +82,9 @@ impl<I: PartialEq + Clone> State<I> {
     pub fn new() -> Self {
         Self {
             model: core::Workspace::default(), ids: Vec::new(), layout: None, inset: 0, main_maximized: false,
-            transition: None, expanded: None, parked: None, dialogs: Vec::new(), dialog_scene: Vec::new(), scroll_active: false, reel_snap: None,
+            transition: None, expanded: None, dialogs: Vec::new(), dialog_scene: Vec::new(), scroll_active: false, reel_snap: None,
             last_scroll: None, reel_bounce: None, reel_bounce_offset: 0., gesture: None, resize: None,
-            trees: Vec::new(), last_active: None, drag: None,
+            trees: Vec::new(), drag: None,
         }
     }
 
@@ -125,11 +120,10 @@ impl<I: PartialEq + Clone> State<I> {
                 else { self.model.reel_group(anchor) };
             let ids: Vec<_> = std::iter::once(anchor).chain(members.iter().copied()).collect();
             let insertion = (Some(anchor) == self.model.main()).then(|| Dock::inner(self.model.side));
-            if let Some(tree) = Tree::reconcile(&ids, &previous, area, self.last_active, insertion) {
+            if let Some(tree) = Tree::reconcile(&ids, &previous, area, insertion) {
                 self.trees.push(tree);
             }
         }
-        self.last_active = self.model.active_main();
     }
 
     pub fn target_scene(&self) -> Vec<SceneItem> {
@@ -252,7 +246,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             } else { self.conscia.model.reel_group(anchor) };
             groups.push((anchor, members.to_vec()));
         }
-        if let Some(parked) = self.conscia.parked { groups.push((parked, Vec::new())); }
         for &(dialog, _) in &self.conscia.dialogs { groups.push((dialog, Vec::new())); }
         for (anchor, members) in groups {
             let mut group = Vec::new();
@@ -270,7 +263,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 col.tiles.push(tile);
             }
             col.display_mode = ColumnDisplay::Normal;
-            col.conscia_splits = self.conscia.model.split_ratios(anchor).to_vec();
             col.conscia_tree = self.conscia.tree(anchor).cloned().map(|tree| {
                 let ids = col.tiles.iter().filter_map(|tile| self.conscia.id(tile.window().id())).collect();
                 (ids, tree)
@@ -330,9 +322,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         if self.conscia.expanded.is_some_and(|(id, _)| !self.conscia.model.in_main(id)) {
             self.conscia.expanded = None;
         }
-        if let Some(id) = self.conscia.parked {
-            if self.conscia.model.insert_reel_front(id) { self.conscia.parked = None; }
-        }
         let area = Rect { x: self.working_area.loc.x.round() as i32,
             y: self.working_area.loc.y.round() as i32,
             width: self.working_area.size.w.floor().max(0.) as i32,
@@ -345,7 +334,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         // A lone Main group owns the whole work area, whether it contains one
         // application or several split windows. Restore the reel only when an
         // actual group/window remains outside Main.
-        if (ids.len() == 1 && self.conscia.parked.is_none()) || self.conscia.main_maximized {
+        if ids.len() == 1 || self.conscia.main_maximized {
             layout.main = area;
             layout.reel_hidden = true;
             layout.origin_offset = (0., 0.);
@@ -363,14 +352,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                         window, role: WindowRole::Main, rect, scale: 1., opacity: 1.,
                     });
                 }
-            }
-        }
-        if let Some(id) = self.conscia.parked {
-            if layout.slot_count > 0 {
-                layout.placements.push(geometry::Placement { window: id,
-                    role: WindowRole::Reel { index: 0 },
-                    rect: Rect { height: layout.reel.height / layout.slot_count as i32, ..layout.reel },
-                    scale: 1. / layout.slot_count as f64, opacity: 1. });
             }
         }
         if let Some((expanded, _)) = self.conscia.expanded {
@@ -477,14 +458,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
     pub fn conscia_next(&mut self) -> bool {
         if !self.conscia_can_edit() { return false; }
-        if let Some(id) = self.conscia.parked.take() {
-            let from = self.conscia.current_scene();
-            self.conscia.model.add(id);
-            self.conscia.model.side = match self.conscia.model.side {
-                ReelSide::Left => ReelSide::Right, ReelSide::Right => ReelSide::Left };
-            self.conscia_changed(from, true);
-            return true;
-        }
         self.conscia.model.reel_front_index().is_some_and(|i| self.conscia_promote(i))
     }
 
@@ -507,12 +480,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         let mut ids: Vec<_> = std::iter::once(anchor).chain(self.conscia.model.main_tiles().iter().copied()).collect();
         ids.push(id);
         ids.extend_from_slice(self.conscia.model.reel_group(id));
-        let preferred = self.conscia.model.active_main();
         let insertion = Some(Dock::inner(self.conscia.model.side));
-        let Some(tree) = Tree::reconcile(&ids, &self.conscia.trees, layout.main, preferred, insertion) else { return false; };
+        let Some(tree) = Tree::reconcile(&ids, &self.conscia.trees, layout.main, insertion) else { return false; };
         if tree.geometry(layout.main).0.iter().any(|(_, r)| r.width <= 0 || r.height <= 0) { return false; }
         let from = self.conscia.current_scene();
-        self.conscia.last_active = preferred;
         if !self.conscia.model.add_main(index, self.conscia.slots()) { return false; }
         self.conscia_changed(from, true);
         true
@@ -551,9 +522,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         let Some(layout) = &self.conscia.layout else { return true; };
         let scene = scene::scene(layout, self.conscia.model.offset());
         if let Some(item) = scene.iter().find(|p| matches!(p.role, WindowRole::Reel { .. })
-            && p.opacity > 0. && pos.x >= p.x && pos.y >= p.y
-            && pos.x < p.x + p.width && pos.y < p.y + p.height) {
-            if self.conscia.parked == Some(item.window) { self.conscia_next(); return true; }
+            && p.hit_test(pos.x, pos.y)) {
             let anchor = self.conscia.model.windows().iter().copied().find(|&id|
                 id == item.window || self.conscia.model.reel_group(id).contains(&item.window));
             if let Some(index) = anchor.and_then(|id| self.conscia.model.windows().iter().position(|&w| w == id)) {
@@ -821,15 +790,13 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         }
         let reel = self.conscia_reel_at(pos);
         let side = if self.conscia.model.side == ReelSide::Left { -1. } else { 1. };
-        let item = self.conscia.current_scene().into_iter().find(|p| p.opacity > 0.
-            && pos.x >= p.x && pos.x < p.x + p.width && pos.y >= p.y && pos.y < p.y + p.height);
+        let item = self.conscia.current_scene().into_iter().find(|p| p.hit_test(pos.x, pos.y));
         // Retain the existing group-slot hit area for gaps between Reel tiles.
         let item = item.or_else(|| {
             if !reel { return None; }
             let layout = self.conscia.layout.as_ref()?;
             scene::scene(layout, self.conscia.model.offset()).into_iter().find(|p|
-                matches!(p.role, WindowRole::Reel { .. }) && p.opacity > 0.
-                && pos.x >= p.x && pos.x < p.x + p.width && pos.y >= p.y && pos.y < p.y + p.height)
+                matches!(p.role, WindowRole::Reel { .. }) && p.hit_test(pos.x, pos.y))
         });
         let title = !reel && item.as_ref().is_some_and(|p| p.role == WindowRole::Main && pos.y < p.y + 32.);
         let id = item.and_then(|p| self.conscia.ids.iter().find(|(_, id)| *id == p.window).map(|(id, _)| id.clone()));
@@ -839,7 +806,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     pub fn conscia_touch_matches(&self, window: &W::Id, reel: bool) -> bool {
         if !self.conscia.dialog_scene.is_empty() || self.conscia.expanded.is_some() { return false; }
         self.conscia.id(window).is_some_and(|id| {
-            if reel { self.conscia.parked == Some(id) || (self.conscia.model.windows().iter().any(|&w| w == id || self.conscia.model.reel_group(w).contains(&id)) && !self.conscia.model.in_main(id)) }
+            if reel { self.conscia.model.windows().iter().any(|&w| w == id || self.conscia.model.reel_group(w).contains(&id)) && !self.conscia.model.in_main(id) }
             else { self.conscia.model.in_main(id) }
         })
     }
@@ -854,7 +821,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
     pub fn conscia_touch_promote(&mut self, window: &W::Id) {
         let Some(id) = self.conscia.id(window) else { return; };
-        if self.conscia.parked == Some(id) { self.conscia_next(); return; }
         let anchor = self.conscia.model.windows().iter().position(|&w| w == id || self.conscia.model.reel_group(w).contains(&id));
         if let Some(index) = anchor { self.conscia_promote(index); }
     }
@@ -875,13 +841,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     pub fn conscia_drag_start(&mut self, pos: Point<f64, Logical>) -> bool {
         if !self.conscia_can_edit() { return false; }
         let Some(origin) = self.conscia.target_scene().into_iter().find(|item|
-            item.role == WindowRole::Main && item.opacity > 0.
-                && pos.x >= item.x && pos.x < item.x + item.width
-                && pos.y >= item.y && pos.y < item.y + item.height) else { return false; };
+            item.role == WindowRole::Main && item.hit_test(pos.x, pos.y)) else { return false; };
         let Some(anchor) = self.conscia.model.main() else { return false; };
         let Some(base) = self.conscia.tree(anchor).cloned() else { return false; };
         self.conscia.model.activate_main(origin.window);
-        self.conscia.last_active = Some(origin.window);
         self.conscia_sync_active();
         self.conscia.drag = Some(Drag { window: origin.window, start: pos, pointer: pos,
             origin, base, preview: None, moved: false, hint: None });

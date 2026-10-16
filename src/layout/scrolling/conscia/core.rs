@@ -16,7 +16,6 @@ pub struct Workspace {
     main_tiles: Vec<WindowId>,
     reel_groups: HashMap<WindowId, Vec<WindowId>>,
     active_main: Option<WindowId>,
-    split_ratios: HashMap<WindowId, Vec<Option<f64>>>,
     pub side: ReelSide,
 }
 impl Workspace {
@@ -34,29 +33,6 @@ impl Workspace {
             .get(&anchor)
             .map(Vec::as_slice)
             .unwrap_or(&[])
-    }
-    pub fn split_ratios(&self, anchor: WindowId) -> &[Option<f64>] {
-        self.split_ratios
-            .get(&anchor)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
-    }
-    pub fn set_main_split(&mut self, index: usize, ratio: f64) -> bool {
-        if index >= self.main_tiles.len() || !ratio.is_finite() {
-            return false;
-        }
-        let Some(anchor) = self.main() else {
-            return false;
-        };
-        let ratios = self.split_ratios.entry(anchor).or_default();
-        ratios.resize(self.main_tiles.len(), None);
-        ratios[index] = Some(ratio.clamp(0.01, 0.99));
-        true
-    }
-    fn reset_main_splits(&mut self) {
-        if let Some(anchor) = self.main() {
-            self.split_ratios.remove(&anchor);
-        }
     }
     fn group_owner(&self, id: WindowId) -> Option<WindowId> {
         self.reel_groups
@@ -91,9 +67,7 @@ impl Workspace {
         if index < front || index - front >= slots || index >= self.windows.len() {
             return false;
         }
-        self.reset_main_splits();
         let id = self.windows.remove(index).unwrap();
-        self.split_ratios.remove(&id);
         self.main_tiles.push(id);
         if let Some(members) = self.reel_groups.remove(&id) {
             self.main_tiles.extend(members);
@@ -107,7 +81,6 @@ impl Workspace {
         if self.main_tiles.is_empty() || !self.in_main(id) {
             return false;
         }
-        self.reset_main_splits();
         if self.main() == Some(id) {
             self.windows[0] = self.main_tiles.remove(0);
         } else {
@@ -125,7 +98,6 @@ impl Workspace {
         if self.main_tiles.is_empty() {
             return false;
         }
-        self.reset_main_splits();
         let tiles = std::mem::take(&mut self.main_tiles);
         for id in tiles.into_iter().rev() {
             self.insert_reel_front(id);
@@ -154,7 +126,6 @@ impl Workspace {
     }
     pub fn remove(&mut self, id: WindowId, slots: usize) -> bool {
         if let Some(anchor) = self.group_owner(id) {
-            self.split_ratios.remove(&anchor);
             let members = self.reel_groups.get_mut(&anchor).unwrap();
             members.retain(|&member| member != id);
             if members.is_empty() {
@@ -164,7 +135,6 @@ impl Workspace {
             return true;
         }
         if let Some(mut members) = self.reel_groups.remove(&id) {
-            self.split_ratios.remove(&id);
             let index = self
                 .windows
                 .iter()
@@ -179,7 +149,6 @@ impl Workspace {
             return true;
         }
         if let Some(i) = self.main_tiles.iter().position(|&w| w == id) {
-            self.reset_main_splits();
             self.main_tiles.remove(i);
             if self.active_main == Some(id) {
                 self.active_main = self.main();
@@ -190,7 +159,6 @@ impl Workspace {
         let Some(i) = self.windows.iter().position(|&w| w == id) else {
             return false;
         };
-        self.split_ratios.remove(&id);
         self.windows.remove(i);
         if i == 0 {
             if !self.main_tiles.is_empty() {
@@ -275,9 +243,6 @@ impl Workspace {
             self.reel_offset = offset.clamp(0., self.max_offset(slots));
         }
     }
-    pub fn scroll(&mut self, delta: f64, slots: usize) {
-        self.set_offset(self.reel_offset + delta, slots);
-    }
     pub fn clamp_offset(&mut self, slots: usize) {
         self.set_offset(self.reel_offset, slots);
     }
@@ -302,14 +267,13 @@ impl Workspace {
 // niri workspace transport: importing a group preserves its split tree. These
 // entry points do not introduce a second ordering policy.
 impl Workspace {
-    pub fn import_group(&mut self, ids: &[WindowId], ratios: &[Option<f64>], activate: bool, slots: usize) {
+    pub fn import_group(&mut self, ids: &[WindowId], activate: bool, slots: usize) {
         let Some((&anchor, members)) = ids.split_first() else { return; };
         if ids.iter().any(|&id| self.contains(id)) { return; }
         let empty = self.windows.is_empty();
         self.windows.push_back(anchor);
         if empty { self.main_tiles = members.to_vec(); }
         else if !members.is_empty() { self.reel_groups.insert(anchor, members.to_vec()); }
-        if !ratios.is_empty() { self.split_ratios.insert(anchor, ratios.to_vec()); }
         if activate {
             // New windows replace the focus group without flipping the layout.
             // Keep the outgoing group at the front of the current reel.
@@ -325,7 +289,6 @@ impl Workspace {
 
     pub fn import_member(&mut self, anchor: WindowId, id: WindowId, activate: bool) {
         if self.contains(id) { return; }
-        self.split_ratios.remove(&anchor);
         if self.main() == Some(anchor) {
             self.main_tiles.push(id);
             if activate { self.active_main = Some(id); }
@@ -341,5 +304,4 @@ impl Workspace {
         self.check();
     }
 
-    pub fn reset_splits(&mut self) { self.reset_main_splits(); }
 }

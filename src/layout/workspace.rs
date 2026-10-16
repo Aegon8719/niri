@@ -686,7 +686,7 @@ impl<W: LayoutElement> Workspace<W> {
         activate: ActivateWindow,
         width: ColumnWidth,
         is_full_width: bool,
-        is_floating: bool,
+        _is_floating: bool,
         anim: Option<niri_config::Animation>,
     ) {
         self.enter_output_for_window(tile.window());
